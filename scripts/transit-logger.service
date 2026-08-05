@@ -1,0 +1,29 @@
+# systemd service for the transit logger (recommended deployment on the VPS).
+# Install:
+#   sudo cp scripts/transit-logger.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now transit-logger
+# Watch:
+#   journalctl -u transit-logger -f
+#
+# Edit User= and the two paths to match the VPS. Uses --loop so systemd keeps
+# one long-lived process; Restart=always covers crashes/network blips.
+
+[Unit]
+Description=BVG transit-delay logger (Jugend forscht)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jufo
+WorkingDirectory=/opt/jufo-transit
+ExecStart=/opt/jufo-transit/.venv/bin/python -m transit_logger.logger --loop 60
+Restart=always
+RestartSec=10
+# Don't let a runaway log fill the disk faster than we notice.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
