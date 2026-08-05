@@ -1,4 +1,9 @@
-data/
+# Ignore everything under data/ EXCEPT the committed NDJSON observations
+# (the GitHub Actions backend commits those; the SQLite DB, raw archive and
+# local backups stay out of git).
+data/*
+!data/observations/
+
 __pycache__/
 *.pyc
 .venv/

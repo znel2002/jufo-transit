@@ -1,0 +1,57 @@
+name: transit-logger
+
+# Free, no-credit-card hosting for the delay logger.
+# A scheduled runner polls the BVG API once and commits the day's NDJSON back to
+# the repo. The commits themselves count as repo activity, so the scheduled
+# workflow is NOT auto-disabled after 60 days of inactivity.
+#
+# Trade-offs (documented honestly for the write-up):
+#   * GitHub's shortest schedule is 5 min and is best-effort — runs can be late
+#     or occasionally skipped under load. We use */15, which is plenty for delay
+#     data and leaves headroom. Gaps are visible in observed_at and are analysed,
+#     not hidden.
+#   * Public repo => unlimited Actions minutes. Keep this repo public (the code
+#     is a competition entry anyway; no secrets involved).
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # every 15 minutes (UTC)
+  workflow_dispatch: {}       # allow manual runs for testing
+
+# Never let two runs commit at once.
+concurrency:
+  group: transit-logger
+  cancel-in-progress: false
+
+permissions:
+  contents: write             # needed to commit the data back
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Poll once (ndjson backend)
+        run: python -m transit_logger.logger --once --out ndjson
+
+      - name: Commit new data
+        run: |
+          git config user.name "transit-logger[bot]"
+          git config user.email "transit-logger@users.noreply.github.com"
+          git add data/observations/*.ndjson || true
+          if git diff --cached --quiet; then
+            echo "no new data this run"
+          else
+            git commit -m "data: poll $(date -u +%Y-%m-%dT%H:%MZ) [skip ci]"
+            # Rebase on any concurrent data commit before pushing.
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+            git push
+          fi
