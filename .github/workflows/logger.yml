@@ -39,34 +39,57 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
-      # Poll in a loop for ~55 minutes rather than once.
+      # Poll in a loop for ~55 minutes, COMMITTING AFTER EVERY CYCLE.
       #
       # Measured 2026-08-10: GitHub honoured only 4 of ~9 scheduled */15 slots in
       # the first three hours (44% coverage, 63-minute worst gap) -- it collapses a
       # high-frequency cron to roughly hourly under load. Dropped slots are
       # permanent data loss, so instead of depending on the scheduler firing often,
       # each run that *does* start keeps polling on its own 15-minute cadence.
+      # The concurrency group makes a queued run start the moment this one ends, so
+      # coverage is continuous rather than hostage to which slots survive.
       #
-      # With the `transit-logger` concurrency group, a run triggered while one is
-      # active waits and starts the moment the previous finishes, so coverage is
-      # continuous rather than dependent on which slots survive.
+      # Why commit per cycle instead of once at the end: a single push at the end of
+      # a 55-minute run puts the whole run's data behind one fallible step. That is
+      # not hypothetical -- run 31419516255 lost three cycles (~1,650 departures)
+      # exactly that way. Per-cycle commits cap the blast radius at one cycle.
       #
-      # `timeout` exits 124 when it fires, hence `|| true`. Cycle files are written
-      # atomically, so being killed mid-cycle costs at most that one cycle.
-      - name: Poll on a loop (~55 min, ndjson backend)
-        run: |
-          timeout 3300 python -m transit_logger.logger --loop 900 --out ndjson || true
-
-      - name: Commit new data
+      # Why the pull is back: unique filenames make *merge* conflicts impossible,
+      # but a push is still rejected whenever the remote has moved at all, which a
+      # 55-minute run almost guarantees. Rebase-then-push, retried, is what actually
+      # makes this safe -- and because filenames never collide, the rebase itself
+      # cannot conflict.
+      - name: Poll on a loop (~55 min), committing each cycle
         run: |
           git config user.name "transit-logger[bot]"
           git config user.email "transit-logger@users.noreply.github.com"
-          git add data/observations || true
-          if git diff --cached --quiet; then
-            echo "no new data this run"
-          else
-            git commit -m "data: poll $(date -u +%Y-%m-%dT%H:%MZ) [skip ci]"
-            # Each cycle writes its own uniquely-named file, so two runs can never
-            # touch the same path and no rebase is needed before pushing.
-            git push
-          fi
+
+          push_data() {
+            git add data/observations || true
+            if git diff --cached --quiet; then
+              echo "  (no new data)"
+              return 0
+            fi
+            git commit -q -m "data: poll $(date -u +%Y-%m-%dT%H:%MZ) [skip ci]"
+            for attempt in 1 2 3 4 5; do
+              if git pull -q --rebase --autostash origin "${GITHUB_REF_NAME}" \
+                 && git push -q; then
+                echo "  pushed (attempt ${attempt})"
+                return 0
+              fi
+              echo "  push attempt ${attempt} failed, retrying"
+              sleep $(( (RANDOM % 10) + 5 ))
+            done
+            echo "::error::push failed after 5 attempts - this cycle's data is at risk"
+            return 1
+          }
+
+          deadline=$(( SECONDS + 3300 ))
+          failed=0
+          while [ "${SECONDS}" -lt "${deadline}" ]; do
+            python -m transit_logger.logger --once --out ndjson || true
+            push_data || failed=1
+            [ "${SECONDS}" -lt "${deadline}" ] || break
+            sleep 900
+          done
+          exit "${failed}"
