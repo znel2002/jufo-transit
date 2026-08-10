@@ -314,3 +314,66 @@ noch `httpx`.
 `pip install -r requirements.txt` aus. Lägen pandas und LightGBM darin, würde aus
 einem 25-Sekunden-Job ein mehrminütiger — 96-mal am Tag, ohne jeden Nutzen, denn der
 Logger braucht ausschließlich `httpx`.
+
+---
+
+## 2026-08-10 — Messung: GitHub führt `*/15` faktisch nur **stündlich** aus
+
+**Was:** Der Cron läuft — aber deutlich seltener als konfiguriert. Erste Messung
+über die ersten drei Betriebsstunden (15:17–18:27 UTC):
+
+| | |
+|---|---|
+| geplante Läufe laut `*/15` | ~9 |
+| tatsächliche Läufe | 4 |
+| **Abdeckung** | **44,4 %** |
+| längste Lücke | 63 min |
+
+Die beiden planmäßigen Läufe kamen um 16:24 und 17:27 UTC — also im Abstand von
+etwa einer Stunde, nicht von 15 Minuten. Der stündliche Dashboard-Workflow
+(`7 * * * *`) lief dagegen pünktlich. Das Muster passt zu GitHubs dokumentiertem
+Verhalten, hochfrequente Zeitpläne unter Last zu verwerfen.
+
+**Warum das ernst ist:** Verworfene Slots sind keine Verzögerung, sondern
+**endgültiger Datenverlust** — dieselbe Unwiederbringlichkeit, die überhaupt der
+Grund war, früh mit dem Loggen anzufangen. Bei rund einem Poll pro Stunde statt
+vier ist die Datendichte viergeteilt, und bei 30 Minuten Vorschau entstehen zwischen
+zwei Polls Abfahrten, die **nie** beobachtet werden.
+
+**Wie es gefunden wurde:** durch das Dashboard (`scripts/collection_dashboard.py`),
+das Soll- gegen Ist-Slots stellt. Genau dafür misst es Abdeckung und nicht nur
+Zeilenzahl — „wir haben N Zeilen" hätte das Problem vollständig verdeckt.
+
+**Entschieden (2026-08-10):** zwei sich ergänzende Änderungen statt Verzicht auf
+Dichte.
+
+1. **Vorschaufenster von 30 auf 65 Minuten.** Ist das Fenster länger als der
+   schlimmstenfalls auftretende Poll-Abstand, wird **jede** Abfahrt mindestens
+   einmal gesehen — auch wenn ein geplanter Lauf ausfällt. Das beseitigt den
+   eigentlichen Schaden (nie beobachtete Abfahrten), nicht nur die Symptomatik.
+2. **Jeder Lauf pollt in einer Schleife statt einmal**
+   (`timeout 3300 python -m transit_logger.logger --loop 900 --out ndjson`).
+   Damit hängt die Messdichte nicht mehr davon ab, wie oft GitHub auslöst: ein
+   einziger gestarteter Lauf deckt ~55 Minuten mit vier Zyklen ab. Über die
+   `concurrency`-Gruppe startet ein wartender Lauf unmittelbar nach dem
+   vorherigen, die Abdeckung wird also durchgehend.
+
+**Dabei gefundener Folgefehler:** `RESULTS = 60` begrenzte die Antwort pro
+Haltestelle. Mit dem längeren Fenster liefert allein der Alexanderplatz **195**
+Abfahrten — die alte Grenze hätte über zwei Drittel davon **stillschweigend**
+abgeschnitten. Auf 250 angehoben, und `poll_once` warnt jetzt aktiv, falls die
+Grenze je erreicht wird. Genau diese Art Fehler wäre in den Daten unsichtbar
+geblieben: keine Fehlermeldung, nur weniger Zeilen. Messwerte danach: 614 statt
+231 Abfahrten pro Zyklus, Maximum 195 pro Halt.
+
+**Ebenfalls gehärtet:** Die Zyklusdatei wird jetzt erst als `.tmp` geschrieben und
+dann per `os.replace` umbenannt. Da der Prozess unter `timeout` läuft, kann er
+mitten im Schreiben abgebrochen werden; eine halb geschriebene `.gz`-Datei wäre
+ein unlesbares Loch in der Messreihe. So ist ein Zyklus entweder vollständig oder
+gar nicht vorhanden.
+
+**Bewusst akzeptierter Preis:** Der Runner läuft damit nahezu durchgehend
+(~20–24 h/Tag). Auf einem öffentlichen Repo sind Actions-Minuten unbegrenzt, und
+die Läufe erzeugen genau die Forschungsdaten, für die dieses Repo existiert.
+Sollte GitHub das drosseln, bleibt der Umzug auf einen Dauerbetrieb-Rechner
+(`scripts/transit-logger.service`) der Rückfallweg.

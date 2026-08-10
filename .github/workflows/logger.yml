@@ -39,8 +39,23 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
-      - name: Poll once (ndjson backend)
-        run: python -m transit_logger.logger --once --out ndjson
+      # Poll in a loop for ~55 minutes rather than once.
+      #
+      # Measured 2026-08-10: GitHub honoured only 4 of ~9 scheduled */15 slots in
+      # the first three hours (44% coverage, 63-minute worst gap) -- it collapses a
+      # high-frequency cron to roughly hourly under load. Dropped slots are
+      # permanent data loss, so instead of depending on the scheduler firing often,
+      # each run that *does* start keeps polling on its own 15-minute cadence.
+      #
+      # With the `transit-logger` concurrency group, a run triggered while one is
+      # active waits and starts the moment the previous finishes, so coverage is
+      # continuous rather than dependent on which slots survive.
+      #
+      # `timeout` exits 124 when it fires, hence `|| true`. Cycle files are written
+      # atomically, so being killed mid-cycle costs at most that one cycle.
+      - name: Poll on a loop (~55 min, ndjson backend)
+        run: |
+          timeout 3300 python -m transit_logger.logger --loop 900 --out ndjson || true
 
       - name: Commit new data
         run: |

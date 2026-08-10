@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -37,8 +38,16 @@ from .db import connect, insert_observations, log_poll
 from .stops import STOPS, STOP_IDS
 
 API_BASE = "https://v6.bvg.transport.rest"
-DURATION_MIN = 30          # look-ahead window per stop
-RESULTS = 60               # max departures per stop
+# Look-ahead window per stop. Raised from 30 to 65 min on 2026-08-10: GitHub was
+# dropping most */15 slots and effectively polling hourly, so a 30-minute window
+# left departures that fell between two polls completely unobserved. A window
+# longer than the worst-case poll interval guarantees every departure is seen at
+# least once, even when a scheduled run is skipped.
+DURATION_MIN = 65
+# Must comfortably exceed the departures a single stop returns in DURATION_MIN --
+# roughly 58 per stop per 30 min at these interchanges, so ~125 for 65 min. If this
+# cap is ever hit the data is silently truncated, which is why poll_once warns.
+RESULTS = 250
 STOP_SPACING_S = 0.7       # polite gap between per-stop requests
 HTTP_TIMEOUT_S = 20
 
@@ -107,9 +116,14 @@ def _write_ndjson(observed_at: str, rows: list[dict]) -> Path:
     while path.exists():
         path = out_dir / f"{stamp}_{n}.ndjson.gz"
         n += 1
-    with gzip.open(path, "wt", encoding="utf-8") as fh:
+    # Write-then-rename: the CI job runs the logger under `timeout`, so the process
+    # can be killed mid-write. A half-written .gz would be an unreadable hole in the
+    # record; an atomic rename means a cycle is either complete or absent.
+    tmp = path.with_suffix(".gz.tmp")
+    with gzip.open(tmp, "wt", encoding="utf-8") as fh:
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
     return path
 
 
@@ -136,6 +150,11 @@ def poll_once(client: httpx.Client, *, out: str, conn=None, archive_raw: bool = 
             payload = resp.json()
             departures = payload.get("departures", payload) if isinstance(payload, dict) else payload
             rows = _parse_departures(observed_at, stop_id, departures)
+            if len(rows) >= RESULTS:
+                # Hitting the cap means the API truncated the window and we are
+                # silently losing departures -- raise RESULTS if this ever appears.
+                print(f"  ! stop {stop_id} returned {len(rows)} rows, at the "
+                      f"RESULTS={RESULTS} cap: data may be truncated", flush=True)
 
             if out == "sqlite":
                 if archive_raw:
