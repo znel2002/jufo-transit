@@ -426,4 +426,62 @@ Dashboard weist ihn als API-Ausfall statt als Lücke aus. Die dabei erzeugten
 synthetischen Datensätze wurden anschließend aus `data/observations/` entfernt —
 in den Forschungsdaten stehen ausschließlich echte Messungen.
 
-<!-- race probe 193053 -->
+
+---
+
+## 2026-08-10 — Datenverlust durch abgelehnten Push (Vorfall, Ursache, Behebung)
+
+**Was passiert ist:** Lauf `31419516255` pollte 55 Minuten lang korrekt vier Zyklen
+(611 / 0 / 533 / 509 Abfahrten), scheiterte dann aber am abschließenden Push:
+
+```
+! [rejected]  main -> main (fetch first)
+```
+
+Drei Zyklusdateien mit rund **1.650 Abfahrten sind endgültig verloren** — der
+Runner wird nach dem Lauf samt Dateisystem verworfen. Das ist genau die
+Unwiederbringlichkeit, wegen der dieses Projekt überhaupt früh mit dem Loggen
+begonnen hat.
+
+**Ursache 1 — falsche Begründung beim Entfernen des Rebase.** Der Schritt
+`git pull --rebase` war mit dem Argument gestrichen worden, eindeutige Dateinamen
+machten Konflikte unmöglich. Das verwechselt zwei verschiedene Dinge:
+eindeutige Dateinamen verhindern **Merge-Konflikte**, aber ein Push wird
+zurückgewiesen, sobald das Remote *irgendeinen* neuen Commit hat — ob er die
+gleichen Dateien berührt oder nicht. Bei einem 55-Minuten-Lauf ist das der
+Normalfall, nicht der Ausnahmefall.
+
+**Ursache 2 — alles hing an einem einzigen Schritt.** Ein Commit am Ende des Laufs
+stellte die Daten aller vier Zyklen hinter einen einzigen fehlbaren Vorgang. Ein
+abgelehnter Push kostete damit nicht einen Zyklus, sondern alle.
+
+**Behoben:**
+1. Der Workflow schleift jetzt selbst und **committet nach jedem Zyklus**
+   (`--once` statt `--loop`). Ein fehlgeschlagener Push kostet höchstens einen
+   Zyklus statt vier.
+2. `git pull --rebase` ist zurück, mit fünf Wiederholungen und **ohne** `|| true`.
+   Da Dateinamen weiterhin nie kollidieren, kann der Rebase selbst nicht in einen
+   Konflikt laufen.
+3. Der Schritt endet mit Exit-Code ≠ 0, wenn die Versuche erschöpft sind — der
+   Lauf schlägt also sichtbar fehl, statt Daten stillschweigend zu verlieren.
+
+**Geprüft am reproduzierten Rennen, nicht am Glücksfall:** Während Lauf
+`31424332673` lief, wurde absichtlich ein fremder Commit auf `main` gepusht —
+exakt die Konstellation, an der der vorherige Lauf zerbrach. Ergebnis in der
+Historie:
+
+```
+9aa681b data: poll 2026-08-10T19:44Z   <- 2. Zyklus, sauber obendrauf gepusht
+bbb3f68 test: move remote during run   <- der störende Commit
+b59ae58 data: poll 2026-08-10T19:29Z   <- 1. Zyklus
+```
+
+Der Lauf hat über den fremden Commit rebased und erfolgreich gepusht.
+
+**Was daraus für die Langfassung folgt:** Bei einer selbst erhobenen Messreihe ist
+nicht nur die Messung selbst eine Fehlerquelle, sondern auch der **Transportweg der
+Daten**. Ein Fehler zwischen Messung und Speicherung ist von einem Messausfall in
+den Daten nicht zu unterscheiden — und war hier obendrein durch eine plausible,
+aber falsche Annahme verursacht. Deshalb protokolliert der Logger inzwischen jeden
+Poll (siehe Eintrag zum Poll-Protokoll), und das Dashboard weist Abdeckung getrennt
+von API-Fehlern aus.
