@@ -65,6 +65,23 @@ def load_rows(obs_dir: Path = OBS_DIR) -> list[dict]:
     return rows
 
 
+def load_meta(obs_dir: Path = OBS_DIR) -> list[dict]:
+    """Per-cycle poll status sidecars written by the logger.
+
+    Without these a cycle is only visible through the rows it produced, so a poll
+    that ran and failed looks exactly like a slot GitHub never fired -- and the
+    coverage figure blames the scheduler for an upstream outage. Files written
+    before 2026-08-10 have no sidecar, hence the row-timestamp fallback.
+    """
+    metas = []
+    for path in sorted(glob.glob(str(obs_dir / "*" / "*.poll.json"))):
+        try:
+            metas.append(json.loads(Path(path).read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return metas
+
+
 def _parse(ts: str) -> datetime | None:
     try:
         return datetime.fromisoformat(ts).astimezone(timezone.utc)
@@ -74,14 +91,21 @@ def _parse(ts: str) -> datetime | None:
 
 # ------------------------------------------------------------------------ analyse
 
-def find_cycles(rows: list[dict]) -> list[datetime]:
+def find_cycles(rows: list[dict], metas: list[dict] | None = None) -> list[datetime]:
     """Cluster observation timestamps into poll cycles.
 
     One cycle writes all four stops within a few seconds. Clustering on the
     timestamps (rather than trusting filenames) means the same code works for both
-    storage layouts and reflects when polling actually happened.
+    storage layouts and reflects when polling actually happened. Cycles that
+    produced no rows contribute no observations, so their timestamps come from the
+    status sidecars -- otherwise a failed poll would silently count as a gap.
     """
-    stamps = sorted({t for t in (_parse(r.get("observed_at", "")) for r in rows) if t})
+    stamped = {t for t in (_parse(r.get("observed_at", "")) for r in rows) if t}
+    for m in metas or []:
+        t = _parse(m.get("cycle_at", ""))
+        if t:
+            stamped.add(t)
+    stamps = sorted(stamped)
     cycles: list[datetime] = []
     for s in stamps:
         if not cycles or (s - cycles[-1]).total_seconds() > CYCLE_GAP_S:
@@ -347,7 +371,8 @@ def hist_svg(delays: list[int]) -> str:
 
 
 def render(rows: list[dict], cycles: list[datetime], cov: dict, dep: dict,
-           runs: list[dict] | None, obs_dir: Path = OBS_DIR) -> str:
+           runs: list[dict] | None, obs_dir: Path = OBS_DIR,
+           metas: list[dict] | None = None) -> str:
     now = datetime.now(timezone.utc)
     age_min = (now - cov["last"]).total_seconds() / 60
     fresh_cls = "ok" if age_min <= 20 else ("warn" if age_min <= 60 else "bad")
@@ -377,6 +402,11 @@ def render(rows: list[dict], cycles: list[datetime], cov: dict, dep: dict,
             "frisch" if age_min <= 20 else "ÜBERFÄLLIG — Logger prüfen", fresh_cls),
         kpi(f"{median:.1f} min", "Median-Verspätung",
             f"{dep['stops']} Halte, {dep['lines']} Linien"),
+        kpi(_fmt(sum(1 for m in (metas or []) if m.get("n_failed"))),
+            "Polls mit Stop-Fehlern",
+            "API-Ausfall, nicht GitHub" if any(m.get("n_failed") for m in (metas or []))
+            else "alle Stops erreichbar",
+            "warn" if any(m.get("n_failed") for m in (metas or [])) else "ok"),
         kpi(f"{gz_bytes/1024:,.0f} kB", "Datenvolumen",
             f"{gz_bytes/max(cov['span_s'],1)*86400/1024:,.0f} kB/Tag hochgerechnet"
             if cov["span_s"] >= PROJECTION_MIN_SPAN_S
@@ -416,6 +446,31 @@ def render(rows: list[dict], cycles: list[datetime], cov: dict, dep: dict,
             + kpi(_fmt(con.get("failure", 0)), "fehlgeschlagen",
                   cls="bad" if con.get("failure") else "")
             + "</div>")
+
+    bad = [m for m in (metas or []) if m.get("n_failed")]
+    if not metas:
+        fail_html = ('<p class="note">Keine Status-Dateien vorhanden — diese Daten '
+                     'stammen aus der Zeit vor der Einführung des Poll-Protokolls '
+                     '(2026-08-10). Für sie lässt sich Ausfall nicht von Lücke '
+                     'unterscheiden.</p>')
+    elif not bad:
+        fail_html = (f'<p class="note ok">Alle {len(metas):,} protokollierten Polls '
+                     f'haben jeden Stop erreicht.</p>')
+    else:
+        fail_rows = "".join(
+            f"<tr><td>{html.escape(m['cycle_at'][:19])}</td>"
+            f"<td>{m['n_failed']}</td><td>{m.get('n_rows', 0):,}</td>"
+            f"<td style='text-align:left'>"
+            + html.escape(", ".join(
+                f"{s['stop_id']}: {s.get('detail', s['status'])}"
+                for s in m["stops"] if s["status"] != "ok")) + "</td></tr>"
+            for m in bad[-15:]
+        )
+        fail_html = (
+            f'<p class="note"><strong>{len(bad):,} von {len(metas):,} Polls</strong> '
+            f'hatten mindestens einen nicht erreichbaren Stop.</p>'
+            '<table><tr><th>Zeitpunkt (UTC)</th><th>Stops betroffen</th>'
+            '<th>Zeilen</th><th>Ursache</th></tr>' + fail_rows + "</table>")
 
     proj, proj_ok = project(cov, dep, len(rows))
     proj_rows = "".join(
@@ -467,6 +522,13 @@ füllen lässt. Diese Zahlen gehören in das Kapitel Fehlerquellen.</p></div>
 <p class="note">Längste Lücke: {_dur(cov['longest_gap_s'])} ·
 {cov['missed']} von {_fmt(cov['expected'])} erwarteten Polls fehlen.</p></div>
 
+<h2>Fehlgeschlagene Polls (Stop-Ebene)</h2>
+<div class="card">{fail_html}
+<p class="note">Ein Poll, der lief und an dem die API scheiterte, ist etwas anderes als
+ein Slot, den GitHub nie ausgelöst hat. Ohne diese Unterscheidung würde ein
+API-Ausfall als Planungslücke gezählt und im Kapitel Fehlerquellen der falschen
+Ursache zugeschrieben.</p></div>
+
 <h2>Volumen der letzten 14 Tage</h2>
 <div class="card"><div class="scroll">{day_bars}</div>
 <p class="note">Beobachtungen pro Tag</p><div class="scroll">{poll_bars}</div>
@@ -508,7 +570,8 @@ def main() -> None:
     args = ap.parse_args()
 
     rows = load_rows(Path(args.obs_dir))
-    cycles = find_cycles(rows)
+    metas = load_meta(Path(args.obs_dir))
+    cycles = find_cycles(rows, metas)
     cov = coverage(cycles)
     dep = departures(rows)
     runs = None if args.no_gh else gh_runs()
@@ -527,13 +590,17 @@ def main() -> None:
     if cov["gaps"]:
         a, b, d, missed = cov["gaps"][0]
         print(f"  longest gap       {_dur(d)} ({missed} slots) at {a:%Y-%m-%d %H:%M}")
+    bad = [m for m in metas if m.get("n_failed")]
+    if metas:
+        print(f"  failed polls      {len(bad)} of {len(metas)} logged"
+              + ("   <-- API outage, not a scheduling gap" if bad else ""))
     if runs is not None:
         sched = sum(1 for r in runs if r["event"] == "schedule")
         print(f"  gh runs           {len(runs)} total, {sched} scheduled")
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(rows, cycles, cov, dep, runs, Path(args.obs_dir)),
+    out.write_text(render(rows, cycles, cov, dep, runs, Path(args.obs_dir), metas),
                    encoding="utf-8")
     print(f"\nwrote {out}  ({out.stat().st_size/1024:.0f} kB)")
     if args.open:

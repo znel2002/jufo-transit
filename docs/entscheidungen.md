@@ -372,8 +372,56 @@ mitten im Schreiben abgebrochen werden; eine halb geschriebene `.gz`-Datei wäre
 ein unlesbares Loch in der Messreihe. So ist ein Zyklus entweder vollständig oder
 gar nicht vorhanden.
 
-**Bewusst akzeptierter Preis:** Der Runner läuft damit nahezu durchgehend
+**Bewusst akzeptierter Preis (1):** Der Runner läuft damit nahezu durchgehend
 (~20–24 h/Tag). Auf einem öffentlichen Repo sind Actions-Minuten unbegrenzt, und
 die Läufe erzeugen genau die Forschungsdaten, für die dieses Repo existiert.
 Sollte GitHub das drosseln, bleibt der Umzug auf einen Dauerbetrieb-Rechner
 (`scripts/transit-logger.service`) der Rückfallweg.
+
+---
+
+## 2026-08-10 — Poll-Protokoll für den NDJSON-Backend (stiller Fehlschlag behoben)
+
+**Wie es auffiel:** Im ersten Schleifen-Lauf lieferte der mittlere Zyklus
+`logged 0 departures`:
+
+```
+18:31:53  logged 611 departures
+18:47:31  logged 0 departures     <-- ?
+19:01:52  logged 533 departures
+```
+
+Die Ursache ließ sich **nur aus der Laufzeit erschließen**: Ein normaler Zyklus
+dauert ~5 s, dieser 43 s (Start 18:46:48, Ausgabe 18:47:31). Bei
+`HTTP_TIMEOUT_S = 20` entspricht das etwa zwei in den Timeout gelaufenen Stops —
+also ein Netz-/API-Aussetzer, keine leere Antwort.
+
+**Der eigentliche Fehler:** Beide Fehlerzweige in `poll_once` schrieben
+ausschließlich nach SQLite (`if conn is not None: log_poll(...)`). Im
+NDJSON-Backend — dem, das produktiv in der CI läuft — ist `conn` immer `None`.
+Ein fehlgeschlagener Poll hinterließ damit **keinerlei Spur**: keine
+Log-Zeile, keine Datei, nichts. Zusätzlich wurde die Zyklusdatei nur bei
+`cycle_rows` ≠ leer geschrieben, ein Totalausfall also gar nicht.
+
+**Warum das für die Auswertung gefährlich ist:** Ein Poll, der lief und an dem
+die API scheiterte, war in den Daten **byteweise identisch** mit einem Slot, den
+GitHub nie ausgelöst hat. Die Abdeckungsanalyse hätte einen fremden
+API-Ausfall dem GitHub-Scheduler zugeschrieben — eine falsche Ursachenzuordnung
+mitten im Kapitel Fehlerquellen.
+
+**Behoben:**
+1. Stop-Fehler werden **immer** nach stdout gemeldet (in den Actions-Logs sichtbar),
+   unabhängig vom Backend.
+2. Pro Zyklus entsteht eine kleine Statusdatei `<stamp>Z.poll.json` mit dem Ergebnis
+   je Stop (`ok` / `http_error` / `exception` samt Ursache). Bewusst als eigene
+   Datei, damit die Abfahrtszeilen genau ein Schema behalten.
+3. Die Zyklusdatei wird **auch leer** geschrieben. Leere Datei + Statusdatei heißt
+   „gepollt, API ausgefallen"; gar keine Datei heißt „Slot nie ausgeführt".
+4. Das Dashboard liest die Statusdateien, zählt solche Zyklen als stattgefunden und
+   weist Stop-Fehler getrennt von Planungslücken aus.
+
+**Geprüft** gegen einen erzwungenen Totalausfall (`API_BASE` auf einen toten Port):
+vier Fehler protokolliert, Ursache je Stop erfasst, leere Zyklusdatei geschrieben,
+Dashboard weist ihn als API-Ausfall statt als Lücke aus. Die dabei erzeugten
+synthetischen Datensätze wurden anschließend aus `data/observations/` entfernt —
+in den Forschungsdaten stehen ausschließlich echte Messungen.

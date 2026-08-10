@@ -127,6 +127,34 @@ def _write_ndjson(observed_at: str, rows: list[dict]) -> Path:
     return path
 
 
+def _write_poll_meta(observed_at: str, status: list[dict]) -> Path:
+    """Record every stop's outcome for this cycle, next to the cycle's data file.
+
+    The sqlite backend has always had `poll_log` for this. The ndjson backend --
+    the one actually running in CI -- had nothing: both error branches wrote only
+    to sqlite, so in production a failed poll left no trace whatsoever. Coverage
+    analysis then charges an upstream API outage to GitHub's scheduler.
+
+    Kept as a separate small JSON file rather than mixed into the NDJSON so the
+    departure rows keep exactly one schema.
+    """
+    out_dir = NDJSON_DIR / observed_at[:10]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = observed_at[:19].replace(":", "").replace("-", "") + "Z"
+    path = out_dir / f"{stamp}.poll.json"
+    payload = {
+        "cycle_at": observed_at,
+        "duration_min": DURATION_MIN,
+        "stops": status,
+        "n_rows": sum(s.get("n", 0) for s in status),
+        "n_failed": sum(1 for s in status if s["status"] != "ok"),
+    }
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
 def poll_once(client: httpx.Client, *, out: str, conn=None, archive_raw: bool = True) -> int:
     """Poll every stop once. Returns total departures recorded this cycle.
 
@@ -135,6 +163,7 @@ def poll_once(client: httpx.Client, *, out: str, conn=None, archive_raw: bool = 
     total = 0
     cycle_at = _utc_now_iso()      # names the cycle's ndjson file
     cycle_rows: list[dict] = []    # all stops of this cycle, written in one go
+    status: list[dict] = []        # per-stop outcome, recorded whatever the backend
     for stop_id in STOP_IDS:
         observed_at = _utc_now_iso()
         try:
@@ -143,9 +172,12 @@ def poll_once(client: httpx.Client, *, out: str, conn=None, archive_raw: bool = 
                 params={"duration": DURATION_MIN, "results": RESULTS},
             )
             if resp.status_code != 200:
+                detail = f"status={resp.status_code}"
+                status.append({"stop_id": stop_id, "status": "http_error",
+                               "detail": detail})
+                print(f"  ! stop {stop_id}: HTTP {resp.status_code}", flush=True)
                 if conn is not None:
-                    log_poll(conn, observed_at, stop_id, "http_error", None,
-                             f"status={resp.status_code}")
+                    log_poll(conn, observed_at, stop_id, "http_error", None, detail)
                 continue
             payload = resp.json()
             departures = payload.get("departures", payload) if isinstance(payload, dict) else payload
@@ -163,14 +195,23 @@ def poll_once(client: httpx.Client, *, out: str, conn=None, archive_raw: bool = 
                 log_poll(conn, observed_at, stop_id, "ok", len(rows))
             else:  # ndjson
                 cycle_rows.extend(rows)
+            status.append({"stop_id": stop_id, "status": "ok", "n": len(rows)})
             total += len(rows)
         except Exception as exc:  # never let one stop kill the cycle
+            detail = repr(exc)[:300]
+            status.append({"stop_id": stop_id, "status": "exception", "detail": detail})
+            print(f"  ! stop {stop_id}: {type(exc).__name__}: {exc}", flush=True)
             if conn is not None:
-                log_poll(conn, observed_at, stop_id, "exception", None, repr(exc)[:500])
+                log_poll(conn, observed_at, stop_id, "exception", None, detail)
         time.sleep(STOP_SPACING_S)
 
-    if out == "ndjson" and cycle_rows:
+    if out == "ndjson":
+        # Written even when the cycle produced nothing. An empty cycle plus its
+        # status file says "we polled and the API failed"; writing nothing at all
+        # would be indistinguishable from "GitHub never ran this slot", and the
+        # coverage analysis would blame the scheduler for an upstream outage.
         _write_ndjson(cycle_at, cycle_rows)
+        _write_poll_meta(cycle_at, status)
     return total
 
 
