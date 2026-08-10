@@ -425,3 +425,5 @@ vier Fehler protokolliert, Ursache je Stop erfasst, leere Zyklusdatei geschriebe
 Dashboard weist ihn als API-Ausfall statt als Lücke aus. Die dabei erzeugten
 synthetischen Datensätze wurden anschließend aus `data/observations/` entfernt —
 in den Forschungsdaten stehen ausschließlich echte Messungen.
+
+<!-- race probe 193053 -->
