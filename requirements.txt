@@ -1,3 +1,3 @@
+# Logger only -- installed on every 15-minute CI poll, so keep it minimal.
+# Analysis dependencies live in requirements-analysis.txt.
 httpx>=0.27
-# analysis-time only (not needed by the logger itself):
-# pandas, polars, scikit-learn, lightgbm, matplotlib, shap

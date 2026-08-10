@@ -11,10 +11,19 @@ cause delay) is the research payload. Precedent: T. Döllmann won a Bavarian
 Mathematik/Informatik Landessieg with the analogous rail project "Bahn-Vorhersage".
 
 ## Data strategy (hybrid)
-- **Berlin local (BVG), self-logged** — the *novel* dataset. Confirmed 2026-08-05:
-  no public historical BVG delay dataset exists (only GTFS schedules), so the
-  logger's months-long record is a genuine contribution. Every week it runs adds
-  data that can never be backfilled — hence it starts early.
+- **Berlin U-Bahn / tram / bus, self-logged** — the *novel* dataset. These are
+  BVG-operated and appear in no public historical delay dataset (only GTFS
+  schedules), so the logger's months-long record is a genuine contribution. They
+  are ~2/3 of every poll (bus 55, subway 46, tram 46 of 231 departures). Every
+  week the logger runs adds data that can never be backfilled — hence it starts
+  early.
+- **Berlin S-Bahn — *not* novel, and used deliberately.** Corrected 2026-08-10:
+  S-Bahn Berlin is a DB subsidiary, so it *is* already covered historically by
+  `piebro/deutsche-bahn-data` (296,163 rows of `train_type = S` at 11 Berlin
+  stations in January 2025 alone, back to 2024-07). Our logger records S-Bahn at
+  Zoologischer Garten and Hauptbahnhof, both of which that dataset also covers —
+  so the overlap becomes an **external validation** of the self-collected data
+  against an independent source. That is worth more than the original claim was.
 - **Deutsche Bahn rail, ready-made** — `piebro/deutsche-bahn-data` (Hugging Face,
   CC BY 4.0). Used to build/validate the modelling pipeline *now* and as a
   full-scale fallback. See `analysis/`.
@@ -44,10 +53,17 @@ transit_logger/
   logger.py     # polls departures, records observations + archives raw JSON
   db.py         # SQLite schema & inserts (append-only observations + poll_log)
   stops.py      # the 4 logged interchange stops (IDs resolved 2026-08-05)
+analysis/
+  rail_baseline.py  # DB rail dataset: ground truth + the baseline every model must beat
+  fetch_weather.py  # DWD hourly weather for Berlin (backfillable, fetched on demand)
+  build_dataset.py  # transit x weather x calendar -> data/dataset.parquet
+  calendar_de.py    # Berlin school holidays + German public holidays
 scripts/
   healthcheck.py          # data sanity + freshness report (also the 48h verification)
   backup.sh               # daily gzipped DB snapshot (cron)
   transit-logger.service  # systemd unit for the VPS
+docs/
+  entscheidungen.md       # decision log -> becomes Methodik + Fehlerquellen in January
 ```
 
 ## Run locally
@@ -83,8 +99,13 @@ the "final" delay. `delay_s` is seconds (positive = late, negative = early, null
 monitoring.
 
 ## Status
-Logger written and **verified end-to-end 2026-08-05**, both backends (one poll =
-~225–232 departures across bus/S-Bahn/U-Bahn/tram/express/regional; delays and
-cancellations captured correctly). GitHub Actions workflow ready. Next: push to a
-public GitHub repo and trigger the first Actions run so continuous collection
-starts.
+- Logger verified end-to-end on both backends (one poll = ~231–242 departures across
+  bus/S-Bahn/U-Bahn/tram/express/regional; delays and cancellations captured).
+- **Deployed 2026-08-10**, collecting continuously via GitHub Actions.
+- Storage migrated to one gzipped file per poll (2026-08-10) — see
+  `docs/entscheidungen.md`.
+- Rail baseline run on 2025-01: **MAE 2.845 min / RMSE 7.376 min** to beat. The
+  delay column's meaning was confirmed empirically, and the original mean-baseline
+  turned out to lose to "predict 0" on MAE (see `analysis/README.md`).
+- Next: transit+weather+calendar join, then gradient-boosted trees and the driver
+  analysis.

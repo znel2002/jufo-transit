@@ -1,0 +1,61 @@
+name: dashboard
+
+# Publishes the collection dashboard to GitHub Pages.
+#
+# Deployed straight from the workflow (actions/deploy-pages) rather than by
+# committing the generated HTML: the logger already commits every 15 minutes, and
+# adding an hourly HTML commit on top would bloat the history for a file that is
+# pure derived output. Nothing is written back to the repo here.
+#
+# The dashboard script is standard-library only, so there is no pip install step
+# and the whole job takes a few seconds.
+
+on:
+  schedule:
+    - cron: "7 * * * *"       # hourly, offset from the logger's */15
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "scripts/collection_dashboard.py"
+      - ".github/workflows/dashboard.yml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build dashboard
+        env:
+          GH_TOKEN: ${{ github.token }}   # lets the script read the run history
+        run: |
+          mkdir -p _site
+          python scripts/collection_dashboard.py --out _site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

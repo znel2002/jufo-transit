@@ -46,12 +46,12 @@ jobs:
         run: |
           git config user.name "transit-logger[bot]"
           git config user.email "transit-logger@users.noreply.github.com"
-          git add data/observations/*.ndjson || true
+          git add data/observations || true
           if git diff --cached --quiet; then
             echo "no new data this run"
           else
             git commit -m "data: poll $(date -u +%Y-%m-%dT%H:%MZ) [skip ci]"
-            # Rebase on any concurrent data commit before pushing.
-            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+            # Each cycle writes its own uniquely-named file, so two runs can never
+            # touch the same path and no rebase is needed before pushing.
             git push
           fi

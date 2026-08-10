@@ -7,10 +7,12 @@ delay. Two storage backends, chosen by where it runs:
 * ``--out sqlite`` (default) — append to a local SQLite DB, and archive the raw
   JSON of each poll. Best for an always-on host (own machine / Pi / VPS) via
   ``--loop``.
-* ``--out ndjson`` — append parsed rows to a per-day newline-delimited JSON file
-  under ``data/observations/``. This is the **GitHub Actions** backend: a runner
-  polls once, appends the file, and the workflow commits it back to the repo, so
-  no persistent disk is needed and no credit card / paid host is involved.
+* ``--out ndjson`` — write each poll cycle to its own gzipped newline-delimited JSON
+  file under ``data/observations/<UTC day>/``. This is the **GitHub Actions**
+  backend: a runner polls once, writes one new file, and the workflow commits it
+  back to the repo, so no persistent disk is needed and no credit card / paid host
+  is involved. One file per cycle (rather than appending to a per-day file) keeps
+  the git history small and makes concurrent runs conflict-free.
 
 Rate limit is 100 req/min; we poll a few stops per run, far under the limit.
 
@@ -83,13 +85,32 @@ def _parse_departures(observed_at: str, stop_id: str, departures: list[dict]) ->
     return rows
 
 
-def _append_ndjson(observed_at: str, rows: list[dict]) -> None:
-    """Append parsed rows to a per-UTC-day NDJSON file (the CI backend)."""
-    NDJSON_DIR.mkdir(parents=True, exist_ok=True)
-    path = NDJSON_DIR / f"{observed_at[:10]}.ndjson"
-    with path.open("a", encoding="utf-8") as fh:
+def _write_ndjson(observed_at: str, rows: list[dict]) -> Path:
+    """Write one poll cycle to its own gzipped NDJSON file (the CI backend).
+
+    One write-once file per cycle, partitioned by UTC day:
+        data/observations/2026-08-10/2026-08-10T151719Z.ndjson.gz
+
+    Deliberately *not* appended to a per-day file. Appending would make git store a
+    full new blob of the whole day on every one of the ~96 daily commits (~1 GB
+    working tree by February), and would make concurrent runs touch the same path,
+    which is the only reason the workflow ever needed a rebase before pushing.
+    Unique filenames make write conflicts structurally impossible.
+    """
+    out_dir = NDJSON_DIR / observed_at[:10]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Second precision is unambiguous at any sane poll interval; the suffix guard
+    # only ever matters if two cycles somehow start within the same second.
+    stamp = observed_at[:19].replace(":", "").replace("-", "") + "Z"
+    path = out_dir / f"{stamp}.ndjson.gz"
+    n = 1
+    while path.exists():
+        path = out_dir / f"{stamp}_{n}.ndjson.gz"
+        n += 1
+    with gzip.open(path, "wt", encoding="utf-8") as fh:
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return path
 
 
 def poll_once(client: httpx.Client, *, out: str, conn=None, archive_raw: bool = True) -> int:
@@ -98,6 +119,8 @@ def poll_once(client: httpx.Client, *, out: str, conn=None, archive_raw: bool = 
     ``out`` is "sqlite" or "ndjson". Failures on one stop never kill the cycle.
     """
     total = 0
+    cycle_at = _utc_now_iso()      # names the cycle's ndjson file
+    cycle_rows: list[dict] = []    # all stops of this cycle, written in one go
     for stop_id in STOP_IDS:
         observed_at = _utc_now_iso()
         try:
@@ -120,12 +143,15 @@ def poll_once(client: httpx.Client, *, out: str, conn=None, archive_raw: bool = 
                 insert_observations(conn, rows)
                 log_poll(conn, observed_at, stop_id, "ok", len(rows))
             else:  # ndjson
-                _append_ndjson(observed_at, rows)
+                cycle_rows.extend(rows)
             total += len(rows)
         except Exception as exc:  # never let one stop kill the cycle
             if conn is not None:
                 log_poll(conn, observed_at, stop_id, "exception", None, repr(exc)[:500])
         time.sleep(STOP_SPACING_S)
+
+    if out == "ndjson" and cycle_rows:
+        _write_ndjson(cycle_at, cycle_rows)
     return total
 
 

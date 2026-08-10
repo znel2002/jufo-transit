@@ -1,0 +1,17 @@
+# Analysis-time dependencies. DELIBERATELY SEPARATE from requirements.txt:
+# the GitHub Actions logger runs `pip install -r requirements.txt` every 15 minutes,
+# and pulling pandas/LightGBM into every poll would turn a 25-second job into a
+# multi-minute one for no benefit. The logger needs httpx and nothing else.
+#
+#     pip install -r requirements-analysis.txt
+
+pandas>=2
+pyarrow>=15          # Parquet + the hf:// filesystem for the rail dataset
+huggingface_hub>=0.24
+holidays>=0.60       # German/Berlin public holidays, offline and versioned
+
+# modelling + driver analysis
+scikit-learn>=1.4
+lightgbm>=4.3
+shap>=0.45
+matplotlib>=3.8
