@@ -29,6 +29,9 @@ permissions:
 jobs:
   poll:
     runs-on: ubuntu-latest
+    # Explicit, just under GitHub's hard 6-hour kill, so the loop's own deadline
+    # (20700s) always wins and the job ends on our terms rather than being culled.
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
 
@@ -59,7 +62,19 @@ jobs:
       # 55-minute run almost guarantees. Rebase-then-push, retried, is what actually
       # makes this safe -- and because filenames never collide, the rebase itself
       # cannot conflict.
-      - name: Poll on a loop (~55 min), committing each cycle
+      # Loop length: measured 2026-08-13 over the first three days. With ~55-minute
+      # runs, coverage was 76.2% and 18.9 hours were lost across 23 gaps -- almost
+      # all of them the dead time between one run ending and the scheduler getting
+      # round to starting the next (the ten longest were 48-108 min). The queued
+      # handover only works if a trigger lands *while* a run is active, and GitHub
+      # drops too many triggers for that to be reliable at 55 minutes.
+      #
+      # Running for nearly the full 6-hour job limit makes it very likely that at
+      # least one trigger arrives during the run, so the successor is already queued
+      # and starts the instant this one finishes. 20700s = 5h45m leaves 15 minutes
+      # of headroom for checkout, setup and the final commit before GitHub's hard
+      # 6-hour kill. Per-cycle commits mean even a hard kill costs nothing.
+      - name: Poll on a loop (~5h45m), committing each cycle
         run: |
           git config user.name "transit-logger[bot]"
           git config user.email "transit-logger@users.noreply.github.com"
@@ -84,7 +99,7 @@ jobs:
             return 1
           }
 
-          deadline=$(( SECONDS + 3300 ))
+          deadline=$(( SECONDS + 20700 ))
           failed=0
           while [ "${SECONDS}" -lt "${deadline}" ]; do
             python -m transit_logger.logger --once --out ndjson || true
