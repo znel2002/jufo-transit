@@ -44,10 +44,14 @@ API_BASE = "https://v6.bvg.transport.rest"
 # longer than the worst-case poll interval guarantees every departure is seen at
 # least once, even when a scheduled run is skipped.
 DURATION_MIN = 65
-# Must comfortably exceed the departures a single stop returns in DURATION_MIN --
-# roughly 58 per stop per 30 min at these interchanges, so ~125 for 65 min. If this
-# cap is ever hit the data is silently truncated, which is why poll_once warns.
-RESULTS = 250
+# Hard ceiling on departures returned per stop. If it is ever reached the API has
+# truncated the window and departures vanish with no error at all, so this is set
+# far above any plausible real count rather than merely above the observed one:
+# measured 2026-08-13 at 15:50 local, Zoologischer Garten already returned 239
+# against the previous cap of 250. Asking for more costs nothing -- the API returns
+# only what exists (results=250, 500 and 1000 all returned the same 239) -- so the
+# margin is free, while being wrong here corrupts the data invisibly.
+RESULTS = 1000
 STOP_SPACING_S = 0.7       # polite gap between per-stop requests
 HTTP_TIMEOUT_S = 20
 
