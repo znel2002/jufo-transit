@@ -64,11 +64,43 @@ def main() -> None:
                     help="seconds of delay counted as 'late' (default 180)")
     ap.add_argument("--repeats", type=int, default=5,
                     help="permutation-importance repeats")
+    ap.add_argument("--sweep", action="store_true",
+                    help="compare thresholds first: severity vs predictability")
     args = ap.parse_args()
 
     from sklearn.ensemble import HistGradientBoostingClassifier
     from sklearn.inspection import permutation_importance
     from sklearn.metrics import average_precision_score, roc_auc_score
+
+    if args.sweep:
+        # The central empirical result: severity and predictability rise together.
+        # Sub-minute jitter is noise; serious disruption is systematic. Re-run as
+        # data accumulates -- the >=10 min row rests on the fewest events and is
+        # therefore the least settled.
+        print(f"{'target':<18}{'pos rate':>9}{'events':>8}"
+              f"{'GBM AUC':>9}{'lookup AUC':>11}{'gain':>7}")
+        print("-" * 62)
+        for th in (60, 180, 300, 600):
+            d, X, y = load(th)
+            if y.sum() < 150:
+                print(f"delay >= {th//60:>2} min      too few events yet")
+                continue
+            cut = int(len(d) * 0.7)
+            Xtr, Xte, ytr, yte = X[:cut], X[cut:], y[:cut], y[cut:]
+            for c in CAT:
+                Xte[c] = Xte[c].cat.set_categories(Xtr[c].cat.categories)
+            mm = HistGradientBoostingClassifier(
+                max_iter=300, learning_rate=0.06, random_state=0,
+                categorical_features=[X.columns.get_loc(c) for c in CAT]).fit(Xtr, ytr)
+            auc = roc_auc_score(yte, mm.predict_proba(Xte)[:, 1])
+            tr, te = d.iloc[:cut], d.iloc[cut:]
+            rate = tr.groupby(["line_name", "hour"], observed=True).y.mean()
+            base = pd.Series(te.set_index(["line_name", "hour"]).index.map(rate).astype(float),
+                             index=te.index).fillna(tr.y.mean()).values
+            bauc = roc_auc_score(yte, base)
+            print(f"delay >= {th//60:>2} min {y.mean():>13.2%}{y.sum():>8,}"
+                  f"{auc:>9.3f}{bauc:>11.3f}{auc-bauc:>+7.3f}")
+        print()
 
     df, X, y = load(args.threshold)
     print(f"target: delay >= {args.threshold//60} min")

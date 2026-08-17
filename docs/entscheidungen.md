@@ -539,3 +539,55 @@ bzw. die Modellierung des Randes. Das ist keine Notlösung, sondern folgt direkt
 aus der gemessenen Verteilung — und es beantwortet die Forschungsfrage besser:
 Gefragt ist, welche Faktoren Verspätung *treiben*, und getrieben wird sie
 nachweislich von den seltenen großen Fällen, nicht vom Normalbetrieb.
+
+---
+
+## 2026-08-17 — Kernbefund: Je schwerer die Störung, desto besser vorhersagbar
+
+**Anlass:** Kritische Prüfung, ob das Projekt mit dieser Datenlage tragfähig ist.
+
+**Messung** (7 Tage, 32.450 auswertbare Abfahrten, zeitlich getrennter Test):
+
+| Ziel | Anteil | Ereignisse | GBM ROC-AUC | Baseline (Linie × Stunde) | Gewinn |
+|---|---|---|---|---|---|
+| ≥ 1 min | 17,91 % | 5.813 | 0,695 | 0,644 | +0,051 |
+| ≥ 3 min | 5,78 % | 1.875 | 0,751 | 0,684 | +0,067 |
+| ≥ 5 min | 3,00 % | 973 | 0,772 | 0,637 | +0,135 |
+| **≥ 10 min** | **1,12 %** | **364** | **0,849** | 0,683 | **+0,166** |
+
+**Befund:** Schwere und Vorhersagbarkeit steigen **gemeinsam**. Verspätungen unter
+einer Minute sind Rauschen und praktisch nicht vorhersagbar; ernsthafte Störungen
+ab 10 Minuten sind deutlich systematisch (AUC 0,849, PR-AUC 0,222 bei 0,63 %
+Positivrate im Test — **35,5-facher** Lift gegenüber Zufall). Auch der *Mehrwert
+des Modells* gegenüber der trivialen Nachschlagetabelle wächst mit der Schwere
+(+0,051 → +0,166).
+
+**Warum das die Fragestellung schärft statt sie zu beschädigen:** Dieselben
+seltenen Ereignisse tragen den Großteil der Gesamtverspätung (2,3 % der Abfahrten
+= 67,6 % aller Verspätungsminuten, siehe vorheriger Eintrag). Die praktisch
+relevanten *und* die statistisch vorhersagbaren Fälle sind also dieselben. Die
+starke Nulllastigkeit der Zielgröße ist damit kein Defekt der Daten, sondern
+verweist auf die richtige Zielgröße: **nicht „wie viele Minuten Verspätung", sondern
+„kommt es zu einer ernsthaften Störung".**
+
+**Was ausdrücklich NICHT hilft — mit Zahlen belegt:**
+- **Wetter:** Beitrag −0,016 (also nichts). Bislang jedoch **nur Sommerdaten**,
+  ohne Schnee und Eis. Der eigentliche Test steht mit den Winterdaten Nov–Jan an.
+- **Kalender:** Schulferien, Feiertage, Wochenende — jeweils ±0,000.
+- **Netzzustand** (Verspätungsquote derselben Linie/Haltestelle in der
+  vorangehenden Stunde, um 30 min verzögert und damit leckagefrei): nur **+0,015
+  AUC**. Die ursprüngliche Vermutung, das Merkmalsset sei zu dünn und Netzzustand
+  würde viel bringen, ist damit **widerlegt** — festgehalten, weil eine widerlegte
+  Hypothese genauso zum Ergebnisteil gehört wie eine bestätigte.
+
+**Vorläufige Antwort auf „welche Faktoren treiben sie tatsächlich?":** Verspätung
+in Berlin ist **strukturell, nicht umweltbedingt** — sie hängt an Linie
+(+0,136 AUC), Verkehrsmittel (+0,060) und Tageszeit, nicht am Wetter und nicht am
+Kalender. Das ist ein belastbares und der Alltagsintuition zuwiderlaufendes
+Ergebnis.
+
+**Einschränkung, die mitgeschrieben gehört:** Die Zeile „≥ 10 min" beruht auf 364
+Ereignissen, im Testfenster auf ~110. Das Konfidenzintervall ist entsprechend
+breit. Bis Ende Januar sind rund 9.000 solcher Ereignisse zu erwarten; erst dann
+ist der Wert belastbar. `analysis/signal_check.py --sweep` reproduziert die
+Tabelle jederzeit.
