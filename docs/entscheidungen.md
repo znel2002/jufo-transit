@@ -485,3 +485,57 @@ den Daten nicht zu unterscheiden — und war hier obendrein durch eine plausible
 aber falsche Annahme verursacht. Deshalb protokolliert der Logger inzwischen jeden
 Poll (siehe Eintrag zum Poll-Protokoll), und das Dashboard weist Abdeckung getrennt
 von API-Fehlern aus.
+
+---
+
+## 2026-08-17 — Die Zielgröße ist quantisiert und extrem nulllastig (Konsequenz für die Modellwahl)
+
+**Anlass:** Rückfrage, ob „0 min" auf dem Dashboard stimmen kann.
+
+**Es stimmt — und zwar als *Median*, nicht als Mittelwert.** Über 35.235 nicht
+ausgefallene Abfahrten (7 Tage):
+
+| | |
+|---|---|
+| exakt 0 | **74,4 %** |
+| verspätet (> 0) | 17,9 % |
+| **verfrüht (< 0)** | **7,7 %** |
+| ohne Echtzeitwert (null) | 7,9 % |
+| Median / Mittelwert | **0,00 min / 0,50 min** |
+
+**Befund 1 — die Daten sind echt, kein zurückgespiegelter Fahrplan.** Drei
+unabhängige Belege: (a) `null` existiert getrennt von `0`, die API unterscheidet
+also „keine Echtzeit" von „pünktlich"; (b) es gibt **negative** Verspätungen (Bus
+13,7 %, Tram 12,8 % zu früh) — ein bloß zurückgegebener Fahrplan könnte das nie
+erzeugen; (c) die Produkte unterscheiden sich stark (Express 45,1 % pünktlich,
+Mittel 8,9 min gegenüber S-Bahn 88,1 %, Mittel 0,4 min), passend zum Befund aus
+dem Bahndatensatz.
+
+**Befund 2 — die Verspätung ist auf ganze Minuten quantisiert.** 100,00 % aller
+Werte sind Vielfache von 60 s, insgesamt nur 75 verschiedene Werte. „Verspätung =
+0" heißt also **„unter einer Minute"**, nicht „sekundengenau pünktlich". Das ist
+eine Auflösungsgrenze der Messung und gehört als solche in die Fehlerquellen:
+Unterschiede unterhalb einer Minute sind grundsätzlich nicht beobachtbar.
+
+**Befund 3 — Verspätung ist ein seltenes Ereignis, kein Normalzustand.** Der
+Mittelwert entsteht fast vollständig im Rand der Verteilung:
+
+| Bereich | Anteil der Abfahrten | Anteil an der Gesamtverspätung |
+|---|---|---|
+| verfrüht | 7,7 % | −24,3 % |
+| exakt 0 | 74,4 % | 0,0 % |
+| 1–2 min | 12,1 % | 31,0 % |
+| 3–5 min | 3,5 % | 25,7 % |
+| **6+ min** | **2,3 %** | **67,6 %** |
+
+Das schlechteste **1 %** der Abfahrten trägt **48,6 %** aller Verspätungsminuten.
+
+**Konsequenz für die Modellierung — und der Grund, das hier festzuhalten:** Eine
+MAE-Regression auf diese Zielgröße ist nahezu wertlos. Die konstante Vorhersage 0
+erreicht bereits einen MAE von ~0,50 min und schlägt damit die meisten Modelle,
+ohne irgendetwas erklärt zu haben. Die inhaltlich sinnvolle Aufgabe ist die
+**unbalancierte Klassifikation** („Verspätung ≥ 3 min", ~5,8 % positive Fälle)
+bzw. die Modellierung des Randes. Das ist keine Notlösung, sondern folgt direkt
+aus der gemessenen Verteilung — und es beantwortet die Forschungsfrage besser:
+Gefragt ist, welche Faktoren Verspätung *treiben*, und getrieben wird sie
+nachweislich von den seltenen großen Fällen, nicht vom Normalbetrieb.

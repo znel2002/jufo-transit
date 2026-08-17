@@ -400,7 +400,11 @@ def render(rows: list[dict], cycles: list[datetime], cov: dict, dep: dict,
             f"seit {cov['first']:%Y-%m-%d %H:%M} UTC"),
         kpi(f"{age_min:.0f} min", "letzter Poll",
             "frisch" if age_min <= 20 else "ÜBERFÄLLIG — Logger prüfen", fresh_cls),
-        kpi(f"{median:.1f} min", "Median-Verspätung",
+        # Median and mean are shown together on purpose: 74% of departures are
+        # exactly 0, so the median is 0 while the mean is driven almost entirely by
+        # a small tail. Showing only one invites reading "average delay = 0".
+        kpi(f"{median:.1f} / {(sum(delays)/len(delays)/60 if delays else 0):.2f} min",
+            "Verspätung Median / Mittel",
             f"{dep['stops']} Halte, {dep['lines']} Linien"),
         kpi(_fmt(sum(1 for m in (metas or []) if m.get("n_failed"))),
             "Polls mit Stop-Fehlern",
