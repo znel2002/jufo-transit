@@ -436,6 +436,7 @@ def render(rows: list[dict], cycles: list[datetime], cov: dict, dep: dict,
         ev = Counter(r["event"] for r in runs)
         con = Counter(r["conclusion"] or r["status"] for r in runs)
         sched = ev.get("schedule", 0)
+        cancelled = con.get("cancelled", 0)
         gh_html = (
             '<div class="kpis">'
             + kpi(_fmt(len(runs)), "Läufe (letzte 100)")
@@ -443,9 +444,19 @@ def render(rows: list[dict], cycles: list[datetime], cov: dict, dep: dict,
                   "Cron läuft" if sched else "noch kein Cron-Lauf",
                   "ok" if sched else "warn")
             + kpi(_fmt(con.get("success", 0)), "erfolgreich", cls="ok")
+            + kpi(_fmt(cancelled), "verdrängt (wartend)", "kein Datenverlust")
             + kpi(_fmt(con.get("failure", 0)), "fehlgeschlagen",
-                  cls="bad" if con.get("failure") else "")
-            + "</div>")
+                  cls="bad" if con.get("failure") else "ok")
+            + "</div>"
+            + ('<p class="note"><strong>„Verdrängt" ist der Normalfall, kein Fehler.</strong> '
+               'Ein Lauf pollt ~5 h 45 min und hält währenddessen die '
+               '<code>concurrency</code>-Gruppe. Jeder weitere Auslöser wartet; trifft der '
+               'nächste ein, bevor der laufende fertig ist, wird der ältere Wartende '
+               'verworfen. Solche Läufe haben nie gepollt und daher auch nichts verloren — '
+               'geprüft: null Poll-Zeilen in ihren Logs. Genau ein Wartender bleibt stets '
+               'übrig und startet unmittelbar, wenn der aktive endet; das ist der '
+               'Mechanismus, der die lückenlose Abdeckung erzeugt.</p>'
+               if cancelled else ""))
 
     bad = [m for m in (metas or []) if m.get("n_failed")]
     if not metas:
