@@ -1,0 +1,1 @@
+{"cycle_at": "2026-08-19T21:00:15.646879+00:00", "duration_min": 65, "stops": [{"stop_id": "900100003", "status": "http_error", "detail": "status=503 after 3 attempts"}, {"stop_id": "900023201", "status": "ok", "n": 120}, {"stop_id": "900120004", "status": "ok", "n": 60}, {"stop_id": "900003201", "status": "ok", "n": 112}], "n_rows": 292, "n_failed": 1}
