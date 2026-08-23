@@ -80,7 +80,7 @@ jobs:
           git config user.email "transit-logger@users.noreply.github.com"
 
           push_data() {
-            git add data/observations || true
+            git add data/observations data/gtfsrt || true
             if git diff --cached --quiet; then
               echo "  (no new data)"
               return 0
@@ -102,7 +102,14 @@ jobs:
           deadline=$(( SECONDS + 20700 ))
           failed=0
           while [ "${SECONDS}" -lt "${deadline}" ]; do
+            # Two sources on purpose. The original transport.rest API went down
+            # on 2026-08-20 and stayed down; every one of its instances lives on
+            # a single machine, so it was a single point of failure for the whole
+            # dataset. VBB's official GTFS-RT feed now runs alongside it, and the
+            # original keeps being tried in case it returns. Neither can abort
+            # the cycle -- a dead source must never stop the other one logging.
             python -m transit_logger.logger --once --out ndjson || true
+            python -m transit_logger.gtfsrt --once || true
             push_data || failed=1
             [ "${SECONDS}" -lt "${deadline}" ] || break
             sleep 900

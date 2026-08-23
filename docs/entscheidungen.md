@@ -591,3 +591,69 @@ Ereignissen, im Testfenster auf ~110. Das Konfidenzintervall ist entsprechend
 breit. Bis Ende Januar sind rund 9.000 solcher Ereignisse zu erwarten; erst dann
 ist der Wert belastbar. `analysis/signal_check.py --sweep` reproduziert die
 Tabelle jederzeit.
+
+---
+
+## 2026-08-23 — Ausfall der Datenquelle: transport.rest ist seit 2026-08-20 tot
+
+**Vorfall:** Seit dem **2026-08-20** schlagen **100 %** aller Polls fehl —
+`ConnectError('[Errno 101] Network is unreachable')`. Vier volle Tage, **348
+aufeinanderfolgende leere Polls**, null Abfahrten. Die Zahl der erfassten
+Abfahrten steht seit dem 19.08. unverändert bei 114.548.
+
+| Tag | Polls | leer |
+|---|---|---|
+| 2026-08-19 | 94 | 6,4 % |
+| **2026-08-20** | 91 | **100 %** |
+| **2026-08-21** | 90 | **100 %** |
+| **2026-08-22** | 91 | **100 %** |
+| **2026-08-23** | 76 | **100 %** |
+
+**Ursache:** `v6.bvg.transport.rest` ist nicht erreichbar — weder von den
+GitHub-Runnern noch lokal (IPv4 lehnt sofort ab, IPv6 läuft in den Timeout).
+Entscheidend: **alle** transport.rest-Instanzen (`v6.bvg`, `v6.vbb`, `v5.bvg`,
+`v6.db`) lösen auf **dieselbe Maschine** auf — `thuya.jannisr.de` /
+`162.55.47.160`. Ein einzelner, privat betriebener Server war damit ein *Single
+Point of Failure* für den gesamten Datensatz. Die eigene Netzanbindung wurde
+gegengeprüft (github.com, example.com: HTTP 200).
+
+**Fehler in der bisherigen Bewertung — der eigentliche Lerneffekt:** Das
+Dashboard meldete weiterhin **91,8 % Abdeckung**, weil es *versuchte* Polls
+zählt. Tatsächlich nutzbar waren rund **60 %**. Die Trennung von „Poll fand
+statt" und „Poll lieferte Daten" war bereits eingebaut (Eintrag zum
+Poll-Protokoll) — sie wurde aber nicht prominent genug angezeigt, sodass ein
+viertägiger Totalausfall hinter einer guten Kennzahl verschwand. Kennzahl und
+Nutzbarkeit müssen dasselbe messen, sonst beruhigt die Kennzahl, statt zu warnen.
+
+**Entscheidung: parallele Erfassung des offiziellen VBB-GTFS-Realtime-Feeds**,
+ohne sofortige Vollmigration.
+
+Quelle: `https://production.gtfsrt.vbb.de/data` — offiziell, **ohne
+Authentifizierung**, 60 Anfragen/min, CC-BY 4.0, betrieben von VBB selbst statt
+von einer Privatperson.
+
+Gemessen am 2026-08-23: Gesamtfeed 6,6 MB, 6.546 Fahrten, 131.689
+Stop-Time-Updates. Gefiltert auf die vier Haltestellen und 65 Minuten Vorschau
+bleiben **399 Datensätze, davon 73 % mit Verspätungsangabe** — pro Zyklus 7,4 kB
+gzip, also ~0,7 MB/Tag. Die Haltestellen-IDs sind als DHID kodiert
+(`de:11000:900100003::3`) und enthalten die bereits verwendeten VBB-Nummern, die
+beiden Quellen bleiben also verknüpfbar. Konsistenzprüfung: bei **290 von 290**
+Datensätzen gilt `planned_when + delay_s == when_est`.
+
+⚠️ Die zunächst gemessenen „nur 8,4 % mit Verspätung" waren ein **Artefakt der
+Auswertung**: Der Feed enthält überwiegend Fahrten Stunden im Voraus, die
+naturgemäß noch keine Echtzeit haben. Innerhalb des relevanten 65-Minuten-Fensters
+sind es 73 %. Festgehalten, weil die falsche Zahl beinahe zur Verwerfung einer
+brauchbaren Quelle geführt hätte.
+
+**Warum parallel und nicht sofort migrieren:** Nicht erfasste Echtzeitdaten sind
+unwiederbringlich, Parse-Entscheidungen dagegen jederzeit revidierbar — dieselbe
+Asymmetrie, die schon die Trennung „Verkehr live loggen, Wetter nachladen"
+begründet hat. Der alte Logger läuft weiter, falls transport.rest zurückkehrt;
+keiner der beiden darf den Zyklus abbrechen.
+
+**Konsequenz für die Langfassung:** Die Abhängigkeit von einer einzigen,
+privat betriebenen Schnittstelle war ein methodisches Risiko, das im Nachhinein
+vermeidbar gewesen wäre. Für eine über Monate laufende Eigenerhebung gehört
+Quellenredundanz von Beginn an zum Versuchsaufbau — und eine Kennzahl, die
+Ausfall nicht als Ausfall anzeigt, ist Teil desselben Fehlers.

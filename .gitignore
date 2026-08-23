@@ -3,6 +3,7 @@
 # local backups stay out of git).
 data/*
 !data/observations/
+!data/gtfsrt/
 
 __pycache__/
 *.pyc
