@@ -702,3 +702,117 @@ und eine saubere Hyperparametersuche.
 Vorzeichenwechsel gegenüber dem August, aber klein und noch immer aus einer
 warmen Jahreszeit. Ob Temperatur echte Wirkung zeigt oder nur die Jahreszeit
 vertritt, ist offen; der belastbare Test bleibt der Winter.
+
+---
+
+## 2026-09-03 — Belastbarkeitsprüfung: Signal echt, Modellvorsprung klein, Zielgröße korrigiert
+
+**Anlass:** Die Frage „zeigen unsere Daten überhaupt etwas?" wurde mit drei
+unabhängigen Untersuchungen geprüft (Modellvergleich, Validierungsstatistik,
+Merkmalsablation) statt mit einem einzelnen ungetunten Modell.
+
+### 1. Das Signal ist statistisch eindeutig echt
+
+Permutationstest mit **200 vollständigen Neuanpassungen auf zufällig vertauschten
+Labels**: Null-Verteilung ROC-AUC **Mittel 0,5001, sd 0,0090, Maximum 0,5258** —
+beobachtet **0,8139**. Das sind ~35 Standardabweichungen; p = 0,005 (der Boden bei
+200 Permutationen). Ein strengerer Test, der die Labels nur *innerhalb* eines Tages
+vertauscht und damit die Tagesbasisrate erhält, ergibt p = 0,020. Das Signal
+betrifft also **welche Abfahrt**, nicht bloß **welchen Tag**.
+
+### 2. Zielgröße korrigiert: ≥ 3 min statt ≥ 10 min
+
+Der Eintrag vom 17.08. empfahl „≥ 10 min", weil dort die AUC am höchsten war. Die
+Rolling-Origin-Validierung über 7 Folds widerlegt das:
+
+| Ziel | Streuung über Folds (sd) | Modell schlägt Baseline |
+|---|---|---|
+| ≥ 10 min | **0,089** (0,605–0,890) | ROC 7/7, **PR-AUC nur 3/7** |
+| ≥ 3 min | **0,024** (0,736–0,815) | ROC 7/7, **PR 7/7** |
+
+Bei „≥ 10 min" ist die Fold-Streuung **doppelt so groß wie der Vorsprung selbst**
+(+0,045) — genau das erklärt den Sprung 0,849 → 0,805. Bei „≥ 3 min" beträgt der
+Vorsprung +0,080 ROC mit tagesgeclustertem Konfidenzintervall [+0,065; +0,092].
+**„≥ 3 min" ist die verteidigbare Zielgröße.**
+
+### 3. Zentrales Negativergebnis: kein Modell schlägt die Nachschlagetabelle bei ≥ 10 min
+
+PR-AUC bei ≥ 10 min (Positivrate 1,74 %):
+
+| Modell | PR-AUC |
+|---|---|
+| Mischung (GBM + geglättete Tabelle) | 0,158 |
+| **Nachschlagetabelle (Linie × Stunde)** | **0,157** |
+| RandomForest (balanced) | 0,156 |
+| HistGB getunt | 0,142 |
+| HistGB ungetunt (ursprünglich berichtet) | 0,089 |
+
+Die zuvor als offen markierte Frage ist damit beantwortet: Die schwache PR-AUC von
+0,089 war tatsächlich **ein Konfigurationsfehler** — mit Klassengewichtung steigt
+sie auf 0,148. Aber selbst vollständig getunt schlägt **kein** Verfahren die
+einzeilige Nachschlagetabelle. Auf der für seltene Ereignisse maßgeblichen Metrik
+bringt Gradient Boosting bei ≥ 10 min keinen Gewinn.
+
+### 4. Zahlenangaben müssen unschärfer werden
+
+Tagesgeclustertes Bootstrap (Tage, nicht Abfahrten, sind die unabhängige Einheit —
+eine Fahrt wird an bis zu vier Halten erfasst und Störungen treten gebündelt auf):
+ROC-AUC bei ≥ 10 min = **0,81 mit 95 %-Intervall [0,79; 0,85]**. Ein zeilenweises
+Bootstrap liefert ein rund **doppelt zu enges** Intervall. Anzugeben ist „etwa 0,8",
+nicht „0,805".
+
+### 5. Ein zufälliger Split hätte um +0,098 ROC getäuscht
+
+Zufälliger Zeilen-Split: ROC 0,912 / PR 0,316. Zeitlicher Split: 0,814 / 0,137.
+Hält man zusätzlich alle Halte einer Fahrt zusammen, ändert das nur 0,003 — die
+Überschätzung stammt also aus **zeitlicher Nähe** (gleicher Tag, gleiches Wetter,
+gleiche Störung), nicht aus Mehrfacherfassung. Jede veröffentlichte Zahl muss aus
+dem zeitlichen Split stammen.
+
+### 6. Nicht-Stationarität und Instrumentenwechsel sind die bindende Grenze
+
+Die Tagesrate schwankt bei ≥ 10 min zwischen **0,58 % und 3,36 %** (Faktor 5,8;
+χ² = 610, p ≈ 1e-115). Über den Quellenwechsel hinweg steigt sie von 1,47 %
+(transport.rest) auf 1,68 % (VBB GTFS-RT) — dieser Wechsel ist mit jeder realen
+Veränderung im Netz **vollständig konfundiert** und lässt sich aus diesem Datensatz
+nicht trennen.
+
+### 7. Ablation: Identität trägt fast alles — aber nicht alles
+
+Zielgröße ≥ 3 min, zeitlicher Split:
+
+| Merkmalssatz | ROC-AUC | PR-AUC |
+|---|---|---|
+| alles | 0,801 | 0,306 |
+| **ohne Identität** (keine Linie/Halt/Produkt) | **0,609** | **0,108** |
+| nur Identität | 0,774 | 0,255 |
+| Identität + Zeit | 0,783 | 0,266 |
+
+Ohne Identität bricht das Modell auf Zufallsnähe ein. Die Identität allein erreicht
+0,774 von 0,801 — **der weitaus größte Teil des Signals ist „welche Linie zu welcher
+Stunde"**. Die übrigen Merkmale steuern aber messbar bei: PR-AUC 0,255 → 0,306
+(+20 % relativ).
+
+**Entscheidender Test — völlig unbekannte Linien:** 61 von 245 Linien wurden aus
+dem Training ausgeschlossen und nur auf ihnen getestet (12.138 Zeilen, Positivrate
+8,32 %). Ergebnis **ROC 0,689 / PR-AUC 0,211**, also das 2,5-Fache der Basisrate.
+Ohne Identitätsmerkmale bleiben nur 0,574 / 0,105. Das Modell **verallgemeinert
+also tatsächlich** auf nie gesehene Linien — schwächer als auf bekannten (0,801),
+aber deutlich über Zufall. Es ist keine reine Nachschlagetabelle mit Zusatzschritten.
+
+### 8. Wetter ist real, aber winzig — und **kein** Saison-Artefakt
+
+Die Vermutung, Temperatur vertrete nur die Jahreszeit, wurde direkt geprüft:
+
+| Merkmalssatz | ROC-AUC | PR-AUC |
+|---|---|---|
+| Basis (ohne Wetter, ohne `day_of_year`) | 0,793 | 0,296 |
+| + Wetter | 0,799 | 0,304 |
+| + `day_of_year` (Saison-Proxy) | 0,793 | 0,301 |
+| + `day_of_year` + Wetter | 0,801 | 0,306 |
+
+Wetter allein: +0,0059 ROC. **Wetter zusätzlich zur Saison: +0,0074 ROC** — der
+Beitrag verschwindet also nicht, wenn die Jahreszeit kontrolliert wird, sondern ist
+sogar minimal größer. **Also keine Konfundierung.** Zugleich ist der Effekt mit
++0,007 ROC / +0,005 PR **praktisch vernachlässigbar**. Beide Aussagen gehören
+zusammen berichtet. Der belastbare Test bleibt der Winter.
