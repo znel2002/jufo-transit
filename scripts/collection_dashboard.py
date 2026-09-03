@@ -30,6 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OBS_DIR = ROOT / "data" / "observations"
+GTFSRT_DIR = ROOT / "data" / "gtfsrt"      # second source, added 2026-08-23
 DEFAULT_OUT = ROOT / "docs" / "dashboard.html"
 
 POLL_INTERVAL_S = 15 * 60      # the workflow's */15 schedule
@@ -84,6 +85,61 @@ def load_meta(obs_dir: Path = OBS_DIR) -> list[dict]:
         except (OSError, json.JSONDecodeError):
             continue
     return metas
+
+
+def combined_coverage(obs_dir: Path = OBS_DIR,
+                      rt_dir: Path = GTFSRT_DIR) -> dict | None:
+    """Usable coverage across BOTH sources -- the number that actually matters.
+
+    Counting *attempted* polls is what let a four-day total outage (2026-08-20 to
+    2026-08-25) sit behind a reassuring 91.8% figure: the polls ran faithfully and
+    returned nothing. A slot is only usable if at least one source produced rows,
+    so that is what gets reported. The two feeds fail largely independently, which
+    is the entire reason the second one was added.
+    """
+    def stamps(pattern: str, key: str) -> list[tuple[datetime, bool]]:
+        out = []
+        for path in sorted(glob.glob(pattern)):
+            try:
+                m = json.loads(Path(path).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            t = _parse(m.get("cycle_at", ""))
+            if t:
+                out.append((t, m.get(key, 0) > 0))
+        return out
+
+    old = stamps(str(obs_dir / "*" / "*.poll.json"), "n_rows")
+    new = stamps(str(rt_dir / "*" / "*.poll.json"), "rows_kept")
+    if not new:
+        return None            # second source not in use yet
+
+    # Cluster both sources' timestamps into shared slots: the two loggers run
+    # back-to-back within a cycle, tens of seconds apart, not simultaneously.
+    events = sorted([(t, ok, "old") for t, ok in old] + [(t, ok, "new") for t, ok in new])
+    slots: list[dict] = []
+    for t, ok, src in events:
+        if slots and (t - slots[-1]["t"]).total_seconds() <= CYCLE_GAP_S:
+            slot = slots[-1]
+        else:
+            slot = {"t": t, "old": None, "new": None}
+            slots.append(slot)
+        slot[src] = ok or (slot[src] or False)
+
+    since = min(t for t, _ in new)      # only judge slots after redundancy existed
+    rel = [s for s in slots if s["t"] >= since]
+    n = len(rel) or 1
+    o = sum(1 for s in rel if s["old"])
+    w = sum(1 for s in rel if s["new"])
+    either = sum(1 for s in rel if s["old"] or s["new"])
+    return {
+        "since": since, "slots": len(rel),
+        "old": o, "new": w,
+        "only_old": sum(1 for s in rel if s["old"] and not s["new"]),
+        "only_new": sum(1 for s in rel if s["new"] and not s["old"]),
+        "either": either, "neither": len(rel) - either,
+        "old_pct": o / n, "new_pct": w / n, "combined_pct": either / n,
+    }
 
 
 def _parse(ts: str) -> datetime | None:
@@ -376,7 +432,7 @@ def hist_svg(delays: list[int]) -> str:
 
 def render(rows: list[dict], cycles: list[datetime], cov: dict, dep: dict,
            runs: list[dict] | None, obs_dir: Path = OBS_DIR,
-           metas: list[dict] | None = None) -> str:
+           metas: list[dict] | None = None, dual: dict | None = None) -> str:
     now = datetime.now(timezone.utc)
     age_min = (now - cov["last"]).total_seconds() / 60
     fresh_cls = "ok" if age_min <= 20 else ("warn" if age_min <= 60 else "bad")
@@ -399,7 +455,11 @@ def render(rows: list[dict], cycles: list[datetime], cov: dict, dep: dict,
         kpi(_fmt(len(rows)), "Beobachtungen", "eine Zeile pro Abfahrt pro Poll"),
         kpi(_fmt(dep["n"]), "Abfahrten", "dedupliziert je Fahrt"),
         kpi(_fmt(cov["actual"]), "Poll-Zyklen", f"erwartet {_fmt(cov['expected'])}"),
-        kpi(f"{comp:.1%}", "Abdeckung", f"{cov['missed']} Slots fehlen", comp_cls),
+        kpi(f"{comp:.1%}", "Abdeckung (Versuche)", f"{cov['missed']} Slots fehlen", comp_cls),
+        (kpi(f"{dual['combined_pct']:.1%}", "NUTZBAR (beide Quellen)",
+             f"nur {dual['neither']} Slots ganz ohne Daten",
+             "ok" if dual["combined_pct"] >= 0.95 else "warn")
+         if dual else ""),
         kpi(_dur((cov['last'] - cov['first']).total_seconds()), "Messdauer",
             f"seit {cov['first']:%Y-%m-%d %H:%M} UTC"),
         kpi(f"{age_min:.0f} min", "letzter Poll",
@@ -491,6 +551,25 @@ def render(rows: list[dict], cycles: list[datetime], cov: dict, dep: dict,
             '<table><tr><th>Zeitpunkt (UTC)</th><th>Stops betroffen</th>'
             '<th>Zeilen</th><th>Ursache</th></tr>' + fail_rows + "</table>")
 
+    if dual:
+        dual_html = (
+            '<table><tr><th>Quelle</th><th>Slots mit Daten</th><th>Anteil</th></tr>'
+            f'<tr><td>transport.rest (ursprünglich)</td><td>{dual["old"]:,}</td>'
+            f'<td>{dual["old_pct"]:.1%}</td></tr>'
+            f'<tr><td>VBB GTFS-RT (seit 23.08.)</td><td>{dual["new"]:,}</td>'
+            f'<td>{dual["new_pct"]:.1%}</td></tr>'
+            f'<tr><td><strong>mindestens eine</strong></td><td><strong>{dual["either"]:,}</strong></td>'
+            f'<td><strong>{dual["combined_pct"]:.1%}</strong></td></tr>'
+            f'<tr><td>keine von beiden</td><td class="bad">{dual["neither"]:,}</td>'
+            f'<td class="bad">{1-dual["combined_pct"]:.1%}</td></tr></table>'
+            f'<p class="note">Von {dual["slots"]:,} Slots seit {dual["since"]:%Y-%m-%d %H:%M} UTC. '
+            f'GTFS-RT rettete <strong>{dual["only_new"]:,}</strong> Slots, an denen die alte '
+            f'Quelle ausfiel; umgekehrt rettete die alte Quelle <strong>{dual["only_old"]:,}</strong>. '
+            f'Die beiden Quellen fallen also weitgehend <em>unabhängig</em> voneinander aus — '
+            f'der Grund, warum Redundanz hier überhaupt etwas bringt.</p>')
+    else:
+        dual_html = ('<p class="note">Nur eine Quelle aktiv — keine Redundanz.</p>')
+
     proj, proj_ok = project(cov, dep, len(rows))
     proj_rows = "".join(
         f"<tr><td>{html.escape(m['label'])}</td><td>{m['date']}</td>"
@@ -565,6 +644,14 @@ Deshalb wird durchgehend MAE <em>und</em> RMSE berichtet.</p></div>
 <p class="note">{_fmt(dep['no_realtime'])} Abfahrten ohne Echtzeitwert,
 {_fmt(dep['cancelled'])} ausgefallen.</p></div>
 
+<h2>Quellen-Redundanz</h2>
+<div class="card">{dual_html}
+<p class="note">Die Kennzahl „Abdeckung (Versuche)" zählt Polls, die <em>stattgefunden</em>
+haben — sie blieb bei 91,8 %, während die Quelle vom 20.–25.08.2026 vier Tage lang
+komplett ausfiel und die Polls brav leere Antworten holten. Maßgeblich ist deshalb
+„nutzbar": ein Slot zählt nur, wenn <em>mindestens eine</em> Quelle Daten geliefert hat.
+Genau dafür wurde die zweite Quelle ergänzt.</p></div>
+
 <h2>GitHub Actions</h2>
 <div class="card">{gh_html}</div>
 
@@ -594,6 +681,7 @@ def main() -> None:
     cov = coverage(cycles)
     dep = departures(rows)
     runs = None if args.no_gh else gh_runs()
+    dual = combined_coverage(Path(args.obs_dir))
 
     age = (datetime.now(timezone.utc) - cov["last"]).total_seconds() / 60
     print(f"\n{'COLLECTION SUMMARY':-^58}")
@@ -619,7 +707,7 @@ def main() -> None:
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(rows, cycles, cov, dep, runs, Path(args.obs_dir), metas),
+    out.write_text(render(rows, cycles, cov, dep, runs, Path(args.obs_dir), metas, dual),
                    encoding="utf-8")
     print(f"\nwrote {out}  ({out.stat().st_size/1024:.0f} kB)")
     if args.open:
