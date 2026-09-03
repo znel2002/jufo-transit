@@ -657,3 +657,48 @@ privat betriebenen Schnittstelle war ein methodisches Risiko, das im Nachhinein
 vermeidbar gewesen wäre. Für eine über Monate laufende Eigenerhebung gehört
 Quellenredundanz von Beginn an zum Versuchsaufbau — und eine Kennzahl, die
 Ausfall nicht als Ausfall anzeigt, ist Teil desselben Fehlers.
+
+---
+
+## 2026-09-03 — Nachprüfung mit 232.799 Abfahrten: Kernbefund bestätigt, Modellvorteil geschrumpft
+
+**Anlass:** Der Befund vom 17.08. beruhte auf 7 Tagen und nur 364 Ereignissen der
+Klasse „≥ 10 min". Damals wurde ausdrücklich festgehalten, dass das
+Konfidenzintervall breit ist. Jetzt liegen **232.799 Abfahrten** vor (24 Tage,
+209.798 mit Echtzeitwert), also die fällige Nachprüfung.
+
+**Bestätigt:** Schwere und Vorhersagbarkeit steigen weiterhin gemeinsam.
+
+| Ziel | Ereignisse | GBM AUC | Baseline (Linie × Stunde) | Gewinn |
+|---|---|---|---|---|
+| ≥ 1 min | 42.815 | 0,694 | 0,663 | +0,031 |
+| ≥ 3 min | 15.916 | 0,741 | 0,718 | +0,023 |
+| ≥ 5 min | 8.578 | 0,772 | 0,739 | +0,032 |
+| ≥ 10 min | 3.306 | **0,805** | 0,765 | **+0,040** |
+
+**Korrigiert — und das ist der wichtigere Teil:** Die früher berichteten 0,849 bei
+„≥ 10 min" waren **zu optimistisch**; mit dem Zehnfachen an Ereignissen sind es
+0,805. Vor allem aber ist der **Vorsprung des Modells gegenüber der trivialen
+Nachschlagetabelle von +0,166 auf +0,040 zusammengeschrumpft**: Mit mehr Daten
+wird die historische Quote je (Linie × Stunde) selbst deutlich besser
+(0,683 → 0,765). Beim PR-AUC ist die Baseline dem GBM sogar **überlegen**
+(0,157 gegenüber 0,115).
+
+**Ehrliche Konsequenz:** Der aufwendige Lernalgorithmus schlägt eine
+Zwei-Spalten-Tabelle nur noch knapp — bei einer Metrik gar nicht. Genau dieser
+Befund gehört prominent in die Ergebnisse und nicht in eine Fußnote. Er ist
+zugleich ein Ergebnis über den Gegenstand: Verspätungsrisiko in Berlin ist
+weitgehend eine **stabile Eigenschaft der Linie zur Tageszeit** und kaum ein
+komplexes Zusammenspiel wechselnder Umstände.
+
+**Offen (nicht als Ergebnis ausgeben, sondern erst prüfen):** Das GBM läuft mit
+Standard-Hyperparametern und **ohne Klassengewichtung** bei 1,58 % Positivrate.
+Der schlechtere PR-AUC kann daher ebenso gut ein Modellierungsmangel wie eine
+echte Obergrenze sein. Vor jeder Schlussfolgerung: Klassengewichte, Kalibrierung
+und eine saubere Hyperparametersuche.
+
+**Erste Änderung beim Wetter:** Der Wetterblock trägt jetzt **+0,032** statt
+−0,016, getragen von Temperatur (+0,0217) und Luftfeuchte (+0,0087). Das ist ein
+Vorzeichenwechsel gegenüber dem August, aber klein und noch immer aus einer
+warmen Jahreszeit. Ob Temperatur echte Wirkung zeigt oder nur die Jahreszeit
+vertritt, ist offen; der belastbare Test bleibt der Winter.
