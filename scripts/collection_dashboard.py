@@ -37,10 +37,14 @@ CYCLE_GAP_S = 5 * 60           # observations closer than this belong to one cyc
 EXPECTED_PER_HOUR = 3600 // POLL_INTERVAL_S
 
 # Jugend forscht 2027 milestones -- the dashboard projects the record forward to these.
+# Confirmed 2026-09-03 against jugend-forscht.de and the FU Berlin regional page.
+# The 62. Wettbewerbsrunde is already open for registration; only the title and a
+# short description are due on 30 November. The written work has no published
+# day-exact date yet ("January 2027"), so it stays a conservative placeholder.
 MILESTONES = [
     ("Anmeldung (Titel + Kurzbeschreibung)", "2026-11-30"),
-    ("Langfassung + Kurzfassung", "2027-01-31"),
-    ("Regionalwettbewerb Berlin", "2027-02-15"),
+    ("Langfassung + Kurzfassung (Januar, Tag offen)", "2027-01-31"),
+    ("Regionalwettbewerb Berlin-Dahlem (FU)", "2027-02-18"),
 ]
 
 
