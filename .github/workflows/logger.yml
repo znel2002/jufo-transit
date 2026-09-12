@@ -99,8 +99,16 @@ jobs:
             return 1
           }
 
+          # A transient push failure is NOT a failed run. GitHub's backend
+          # intermittently answers a push with "remote: fatal error in
+          # commit_refs"; the commit simply stays local and rides along with the
+          # next cycle's push, losing nothing. Marking the whole multi-hour run
+          # failed for that hid the difference between "recovered by itself" and
+          # "data never reached the remote". What matters is only the latter, so
+          # the verdict is taken at the END, from whether anything is still
+          # unpushed -- not from whether any attempt ever failed.
           deadline=$(( SECONDS + 20700 ))
-          failed=0
+          transient=0
           while [ "${SECONDS}" -lt "${deadline}" ]; do
             # Two sources on purpose. The original transport.rest API went down
             # on 2026-08-20 and stayed down; every one of its instances lives on
@@ -110,8 +118,20 @@ jobs:
             # the cycle -- a dead source must never stop the other one logging.
             python -m transit_logger.logger --once --out ndjson || true
             python -m transit_logger.gtfsrt --once || true
-            push_data || failed=1
+            push_data || transient=$(( transient + 1 ))
             [ "${SECONDS}" -lt "${deadline}" ] || break
             sleep 900
           done
-          exit "${failed}"
+
+          # Final verdict: is any committed data still sitting only on this runner?
+          git fetch -q origin "${GITHUB_REF_NAME}" 2>/dev/null || true
+          unpushed=$(git rev-list --count "origin/${GITHUB_REF_NAME}..HEAD" 2>/dev/null || echo 0)
+          if [ "${transient}" -gt 0 ]; then
+            echo "::warning::${transient} push attempt(s) failed during this run"
+          fi
+          if [ "${unpushed}" -gt 0 ]; then
+            echo "::error::${unpushed} commit(s) never reached the remote - data lost with this runner"
+            exit 1
+          fi
+          echo "all data pushed (${transient} transient push failure(s), all recovered)"
+          exit 0

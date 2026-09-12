@@ -816,3 +816,51 @@ Beitrag verschwindet also nicht, wenn die Jahreszeit kontrolliert wird, sondern 
 sogar minimal größer. **Also keine Konfundierung.** Zugleich ist der Effekt mit
 +0,007 ROC / +0,005 PR **praktisch vernachlässigbar**. Beide Aussagen gehören
 zusammen berichtet. Der belastbare Test bleibt der Winter.
+
+---
+
+## 2026-09-12 — „Fehlgeschlagene" Läufe waren kein Datenverlust (Kennzahl, nicht Vorfall)
+
+**Symptom:** Zwei der letzten 40 Logger-Läufe waren als *failed* markiert
+(2026-09-09 und 2026-09-11).
+
+**Tatsächliche Ursache:** GitHubs Server lehnte einzelne Pushes ab mit
+
+```
+remote: fatal error in commit_refs
+ ! [remote rejected] main -> main (failure)
+```
+
+Das ist **kein** Fast-Forward-Problem und kein Fehler auf unserer Seite, sondern
+ein sporadischer Backend-Fehler bei GitHub. Alle fünf Wiederholungen scheiterten,
+der Commit blieb lokal — **und wurde beim nächsten Zyklus mitgeschoben.**
+
+**Belegt, dass nichts verloren ging:** Der Zyklus, dessen Push um 21:54:29
+scheiterte, liegt als `20260911T215429Z.ndjson.gz` im Repo, ebenso die folgenden
+(22:10, 22:25). Die Wiederholungslogik hat also funktioniert.
+
+**Der eigentliche Fehler lag in der Bewertung:** Die Variable `failed` wurde beim
+ersten misslungenen Push auf 1 gesetzt und **nie zurückgesetzt**, sodass der
+gesamte, mehrstündige Lauf am Ende als fehlgeschlagen galt — obwohl die Daten
+vollständig angekommen waren. Damit war „hat sich selbst erholt" nicht mehr von
+„Daten sind verloren" zu unterscheiden, und genau diese Unterscheidung ist die
+einzige, auf die es ankommt.
+
+**Behoben:** Das Urteil fällt jetzt am Ende des Laufs aus dem Zustand, nicht aus
+der Historie — `git rev-list --count origin/main..HEAD` prüft, ob noch etwas
+ausschließlich auf dem Runner liegt. Vorübergehende Fehlversuche erzeugen eine
+*warning* mit Anzahl, ein echter Verlust einen *error* mit Exit-Code 1.
+
+**Muster, das sich hier wiederholt:** Schon zweimal zuvor war nicht die Messung
+das Problem, sondern die **Kennzahl über die Messung** — die Abdeckungszahl, die
+einen viertägigen Totalausfall hinter 91,8 % verbarg, und jetzt ein Exit-Code, der
+Erholung als Fehler meldete. Eine Überwachung, die den Unterschied zwischen
+„gestört" und „verloren" nicht macht, ist selbst eine Fehlerquelle.
+
+**Beobachtungspunkt:** Das Repo enthält inzwischen 2.958 Commits und 9.447
+Dateien (69 MB Daten, 46 MB `.git`) bei rund 96 Commits pro Tag. Das liegt weit
+unter GitHubs Größengrenzen, aber `commit_refs`-Fehler treten erfahrungsgemäß eher
+bei hoher Commit-Frequenz auf. Sollte sich das häufen, wäre das Bündeln mehrerer
+Zyklen pro Commit (z. B. stündlich statt alle 15 Minuten) die naheliegende
+Gegenmaßnahme — mit dem bewusst abzuwägenden Nachteil, dass dann wieder mehr Daten
+hinter einem einzelnen Push stehen.
