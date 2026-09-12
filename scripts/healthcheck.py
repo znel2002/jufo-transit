@@ -1,81 +1,81 @@
-"""Quick health/verification report on the logged data.
-
-Run any time to confirm the logger is alive and the data looks sane.
-This doubles as the 48-hour verification step from the build plan.
+"""Quick freshness check on the live collection. Run it any time.
 
     python scripts/healthcheck.py
+
+Rewritten 2026-09-12. It previously read only `data/transit.db`, the SQLite
+backend, which stopped being the production path the moment the logger moved to
+GitHub Actions on 2026-08-10. Running it since then printed a healthy-looking
+report ending on 2026-08-10 -- it would have shown the same thing whether
+collection was fine or had been dead for a month.
+
+That was the same class of defect as the coverage figure that hid a four-day
+outage and the exit code that reported recovery as failure: a monitor that cannot
+tell "working" from "stopped" is worse than no monitor, because it reassures.
+
+For the full picture (coverage, gaps, per-source redundancy, delay distributions)
+use `scripts/collection_dashboard.py`. This is the 2-second version.
 """
 from __future__ import annotations
 
-import sqlite3
+import glob
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "transit.db"
+ROOT = Path(__file__).resolve().parent.parent
+SOURCES = {
+    "transport.rest": (ROOT / "data" / "observations", "n_rows"),
+    "VBB GTFS-RT": (ROOT / "data" / "gtfsrt", "rows_kept"),
+}
+STALE_MIN = 25          # a cycle is due every 15 min; allow one late run
 
 
-def main() -> None:
-    if not DB_PATH.exists():
-        print("No DB yet at", DB_PATH, "- has the logger run?")
-        return
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
+def latest(dir_: Path, key: str):
+    files = sorted(glob.glob(str(dir_ / "*" / "*.poll.json")))
+    if not files:
+        return None
+    for path in reversed(files[-40:]):          # newest first
+        try:
+            m = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        return m, len(files)
+    return None
 
-    total = conn.execute("SELECT COUNT(*) c FROM observations").fetchone()["c"]
-    print(f"observations rows: {total:,}")
 
-    first = conn.execute("SELECT MIN(observed_at) a FROM observations").fetchone()["a"]
-    last = conn.execute("SELECT MAX(observed_at) a FROM observations").fetchone()["a"]
-    print(f"time span: {first}  ->  {last}")
+def main() -> int:
+    now = datetime.now(timezone.utc)
+    print(f"collection healthcheck  {now:%Y-%m-%d %H:%M} UTC\n")
+    worst = 0.0
+    any_data = False
 
-    print("\nrows per product:")
-    for r in conn.execute(
-        "SELECT product, COUNT(*) c FROM observations GROUP BY product ORDER BY c DESC"
-    ):
-        print(f"  {r['product'] or '(null)':<12} {r['c']:,}")
+    for name, (dir_, key) in SOURCES.items():
+        got = latest(dir_, key)
+        if not got:
+            print(f"  {name:<16} no data on disk")
+            continue
+        meta, n_files = got
+        t = datetime.fromisoformat(meta["cycle_at"]).astimezone(timezone.utc)
+        age = (now - t).total_seconds() / 60
+        rows = meta.get(key, 0)
+        worst = max(worst, age) if rows else worst
+        any_data = any_data or rows > 0
+        flag = "" if age <= STALE_MIN else "   <-- STALE"
+        status = f"{rows:>5,} rows" if rows else "    0 rows  (source down)"
+        print(f"  {name:<16} {n_files:>5,} cycles | last {t:%m-%d %H:%M} "
+              f"({age:5.1f} min ago) | {status}{flag}")
 
-    print("\ndelay distribution (seconds, non-cancelled, non-null):")
-    delays = [
-        r[0] for r in conn.execute(
-            "SELECT delay_s FROM observations "
-            "WHERE delay_s IS NOT NULL AND cancelled=0 ORDER BY delay_s"
-        )
-    ]
-    if delays:
-        n = len(delays)
-        def pct(p: float) -> int:
-            return delays[min(n - 1, int(p * n))]
-        print(f"  count    {n:,}")
-        print(f"  min      {delays[0]}")
-        print(f"  p25      {pct(0.25)}")
-        print(f"  median   {pct(0.50)}")
-        print(f"  p75      {pct(0.75)}")
-        print(f"  p95      {pct(0.95)}")
-        print(f"  max      {delays[-1]}")
-        print(f"  avg      {round(sum(delays) / n, 1)}")
-    else:
-        print("  (no delay values yet)")
-
-    cancelled = conn.execute(
-        "SELECT COUNT(*) c FROM observations WHERE cancelled=1"
-    ).fetchone()["c"]
-    print(f"\ncancelled departures seen: {cancelled:,}")
-
-    # Gap check: largest gap between consecutive polls (a proxy for outages).
-    print("\npoll health (last 20 poll cycles):")
-    errs = conn.execute(
-        "SELECT status, COUNT(*) c FROM poll_log GROUP BY status"
-    ).fetchall()
-    for r in errs:
-        print(f"  {r['status']:<12} {r['c']:,}")
-
-    # Freshness: how long since the last successful poll?
-    if last:
-        last_dt = datetime.fromisoformat(last)
-        age_min = (datetime.now(timezone.utc) - last_dt).total_seconds() / 60
-        flag = "  <-- STALE, check the logger!" if age_min > 10 else ""
-        print(f"\nlast observation age: {age_min:.1f} min{flag}")
+    print()
+    if not any_data:
+        print("  !! NEITHER source returned data in its last cycle")
+        return 1
+    if worst > STALE_MIN:
+        print(f"  !! newest usable data is {worst:.0f} min old - check the workflow")
+        return 1
+    print("  OK - at least one source is delivering fresh data")
+    print("  full report: python scripts/collection_dashboard.py")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

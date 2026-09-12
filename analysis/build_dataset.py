@@ -39,11 +39,13 @@ import fetch_weather
 
 ROOT = Path(__file__).resolve().parent.parent
 OBS_GLOB = str(ROOT / "data" / "observations" / "*" / "*.ndjson.gz")
+RT_GLOB = str(ROOT / "data" / "gtfsrt" / "*" / "*.ndjson.gz")
+ROUTES_CSV = Path(__file__).resolve().parent / "vbb_routes.csv"
 DEFAULT_OUT = ROOT / "data" / "dataset.parquet"
 
 KEY = ["trip_id", "stop_id", "planned_when"]
 # Carried through from the last observation of each departure.
-CARRY = ["line_name", "product", "direction", "platform", "planned_platform"]
+CARRY = ["line_name", "product", "direction", "platform", "planned_platform", "source"]
 
 
 def load_observations(pattern: str = OBS_GLOB) -> pd.DataFrame:
@@ -57,6 +59,61 @@ def load_observations(pattern: str = OBS_GLOB) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     print(f"{len(files):,} poll files -> {len(df):,} raw observations")
     return df
+
+
+def load_gtfsrt(pattern: str = RT_GLOB) -> pd.DataFrame:
+    """Read the VBB GTFS-RT capture and normalise it onto the logger's schema.
+
+    Added 2026-09-12. The second source had been collected since 2026-08-23 but was
+    invisible to this pipeline, which globbed only data/observations: about a
+    million rows unused, and 16.2% of cycle slots where GTFS-RT holds the ONLY data
+    (including much of the 2026-08-20..25 outage) simply absent from the analysis.
+
+    GTFS-RT identifies a trip by route_id alone, with no line name and no vehicle
+    type -- precisely the features the model depends on most (removing identity
+    costs 0.19 ROC-AUC). analysis/vbb_routes.csv, built once from the static GTFS
+    feed, supplies both; 37 of 37 route_ids in a live cycle resolved against it.
+    """
+    files = sorted(glob.glob(pattern))
+    if not files:
+        return pd.DataFrame()
+    rows = []
+    for path in files:
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
+            rows.extend(json.loads(line) for line in fh)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    if ROUTES_CSV.exists():
+        routes = pd.read_csv(ROUTES_CSV, dtype=str)
+        df = df.merge(routes[["route_id", "line_name", "product"]],
+                      on="route_id", how="left")
+        unresolved = df["line_name"].isna().mean()
+        if unresolved > 0.01:
+            print(f"  ! {unresolved:.1%} of GTFS-RT rows have no route match -- "
+                  f"re-run analysis/fetch_gtfs_routes.py, the feed has new routes")
+    else:
+        print(f"  ! {ROUTES_CSV.name} missing -- run analysis/fetch_gtfs_routes.py; "
+              f"GTFS-RT rows will have no line_name/product")
+        df["line_name"] = pd.NA
+        df["product"] = pd.NA
+
+    # trip_id lives in a different namespace from the logger's; prefix it so the
+    # two can never be conflated when the sources are concatenated.
+    df["trip_id"] = "rt:" + df["trip_id"].astype(str)
+    df["direction"] = pd.NA
+    df["platform"] = pd.NA
+    df["planned_platform"] = pd.NA
+    df["cancelled"] = (df.get("schedule_relationship", 0) == 1).astype(int)
+    keep = ["observed_at", "stop_id", "trip_id", "line_name", "product", "direction",
+            "planned_when", "when_est", "delay_s", "cancelled", "platform",
+            "planned_platform", "source"]
+    for c in keep:
+        if c not in df.columns:
+            df[c] = pd.NA
+    print(f"{len(files):,} GTFS-RT files -> {len(df):,} raw observations")
+    return df[keep]
 
 
 def collapse_to_departures(df: pd.DataFrame) -> pd.DataFrame:
@@ -101,6 +158,42 @@ def collapse_to_departures(df: pd.DataFrame) -> pd.DataFrame:
 
     print(f"collapsed to {len(out):,} departures "
           f"({len(df)/max(len(out),1):.2f} observations each on average)")
+    return out
+
+
+def dedupe_across_sources(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop GTFS-RT copies of departures the logger already recorded.
+
+    Both feeds watch the SAME physical departures, but identify trips in different
+    namespaces, so a naive concat double-counts: measured 2026-09-12, 47.5% of
+    (stop, planned_when, line) keys appeared in both sources, 329,620 rows. Feeding
+    that to a model would put the same real event in train and test at once and
+    inflate every metric.
+
+    Matching is deliberately CONSERVATIVE. (stop, planned_when, line) is not a
+    perfect identifier -- within the logger alone 5.8% of departures share one (two
+    directions of the same line leaving the same minute), falling to 1.5% once
+    direction is added, and GTFS-RT carries no direction at all. So the rule is:
+    where the key already exists in the logger data, the GTFS-RT row is DISCARDED.
+    The failure mode is therefore dropping a genuine record, never inventing a
+    duplicate -- the safe direction for a dataset whose whole point is integrity.
+
+    GTFS-RT then contributes exactly what it was added for: the slots the logger
+    missed, including the 2026-08-20..25 outage.
+    """
+    if "source" not in df.columns or df["source"].nunique() < 2:
+        return df
+    key = ["stop_id", "planned_when", "line_name"]
+    is_rt = df["source"] == "vbb-gtfsrt"
+    seen = set(map(tuple, df.loc[~is_rt, key].astype(str).itertuples(index=False)))
+    rt_keys = list(map(tuple, df.loc[is_rt, key].astype(str).itertuples(index=False)))
+    drop_mask = pd.Series(False, index=df.index)
+    drop_mask.loc[is_rt] = [k in seen for k in rt_keys]
+    dropped = int(drop_mask.sum())
+    out = df[~drop_mask]
+    print(f"cross-source dedupe: dropped {dropped:,} GTFS-RT departures already "
+          f"recorded by the logger; kept {len(out):,} "
+          f"({int(is_rt.sum()) - dropped:,} unique to GTFS-RT)")
     return out
 
 
@@ -207,7 +300,17 @@ def main() -> None:
                     help="skip the DWD fetch (offline / quick structural check)")
     args = ap.parse_args()
 
-    df = collapse_to_departures(load_observations())
+    obs = load_observations()
+    obs["source"] = "transport.rest"
+    rt = load_gtfsrt()
+    if not rt.empty:
+        raw = pd.concat([obs, rt], ignore_index=True)
+        print(f"combined: {len(raw):,} raw observations from "
+              f"{raw['source'].nunique()} sources")
+    else:
+        raw = obs
+        print("no GTFS-RT data found -- using the logger source only")
+    df = dedupe_across_sources(collapse_to_departures(raw))
 
     if args.no_weather:
         print("\nskipping weather (--no-weather)")

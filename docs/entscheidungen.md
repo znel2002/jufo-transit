@@ -864,3 +864,79 @@ bei hoher Commit-Frequenz auf. Sollte sich das häufen, wäre das Bündeln mehre
 Zyklen pro Commit (z. B. stündlich statt alle 15 Minuten) die naheliegende
 Gegenmaßnahme — mit dem bewusst abzuwägenden Nachteil, dass dann wieder mehr Daten
 hinter einem einzelnen Push stehen.
+
+---
+
+## 2026-09-12 — Zweite Quelle war in der Auswertung unsichtbar (und hätte beim Zusammenführen Duplikate erzeugt)
+
+**Befund bei der Durchsicht:** `build_dataset.py` durchsuchte ausschließlich
+`data/observations/`. Die seit dem 23.08. erhobene VBB-GTFS-RT-Quelle war der
+Auswertung damit **völlig unbekannt**: **1.007.504 Zeilen ungenutzt**, und in
+**288 Zyklus-Slots (16,2 %)** lagen ausschließlich dort Daten — darunter ein
+Großteil des viertägigen Ausfalls vom 20.–25.08. Die gesamte Modellierung lief auf
+etwa 70 % der tatsächlich vorhandenen Abdeckung.
+
+**Voraussetzung dafür geschaffen:** GTFS-RT benennt eine Fahrt nur über
+`route_id` (z. B. `10148_109`) — ohne Linienname und ohne Verkehrsmittel, also
+ohne genau die beiden Merkmale, die das Modell am stärksten trägt (ohne Identität
+fällt ROC-AUC von 0,801 auf 0,609). Der statische VBB-GTFS-Feed
+(`https://www.vbb.de/vbbgtfs`, 77 MB) liefert beides. `fetch_gtfs_routes.py` lädt
+ihn **einmalig** und reduziert ihn auf `analysis/vbb_routes.csv` (1.259 Routen,
+29 kB, eingecheckt) — die Auswertung braucht danach keinen Netzzugriff und bleibt
+für eine Jury reproduzierbar. Kontrolle: in einem Live-Zyklus lösten sich **37 von
+37** `route_id`s auf. (`urllib` erhält von vbb.de ein 403; ein aussagekräftiger
+User-Agent ist erforderlich.)
+
+**Beinahe-Fehler beim Zusammenführen — der eigentliche Lerninhalt:** Ein einfaches
+Aneinanderhängen beider Quellen ergab 511.729 Abfahrten. Die Prüfung zeigte
+jedoch: **47,5 % der Schlüssel (Halt, geplante Zeit, Linie) kamen in beiden
+Quellen vor**, 329.620 Zeilen waren betroffen. Beide Feeds beobachten dieselben
+physischen Abfahrten, vergeben aber `trip_id`s in getrennten Namensräumen — die
+Deduplikation auf `trip_id` konnte das prinzipiell nicht erkennen. Ungeprüft
+übernommen hätte das denselben realen Vorgang gleichzeitig in Trainings- und
+Testmenge gebracht und **jede Kennzahl aufgebläht**.
+
+**Bewusst konservative Lösung:** `(stop_id, planned_when, line_name)` ist kein
+perfekter Identifikator — schon innerhalb der Logger-Quelle teilen sich 5,8 % der
+Abfahrten einen solchen Schlüssel (zwei Richtungen derselben Linie zur selben
+Minute), mit `direction` nur noch 1,5 %, und GTFS-RT führt gar keine Richtung.
+Deshalb gilt: Existiert der Schlüssel bereits in den Logger-Daten, wird die
+GTFS-RT-Zeile **verworfen**. Der mögliche Fehler ist damit immer „ein echter
+Datensatz zu wenig", nie „ein erfundenes Duplikat" — bei einem Datensatz, dessen
+Zweck Integrität ist, die richtige Richtung.
+
+**Ergebnis:** 163.492 Duplikate entfernt, **348.237 Abfahrten** bleiben — davon
+**9.181 ausschließlich aus GTFS-RT**, 874 davon aus dem Ausfallfenster. Verbleibende
+quellenübergreifende Duplikate: **0**. Der Zugewinn ist mit +2,7 % kleiner als die
+16,2 % Slot-Abdeckung vermuten ließ, weil dieselbe Abfahrt meist im Nachbarslot
+ohnehin von der anderen Quelle gesehen wurde. Die Spalte `source` bleibt im
+Datensatz, damit jede Zeile rückverfolgbar ist.
+
+**Offen:** Bei 21,1 % der GTFS-RT-Zeilen fehlt der Linienname — die Routentabelle
+stammt vom 10.09., die Daten reichen bis 23.08. zurück, und VBB vergibt
+`route_id`s zwischen Releases neu. Für die Endauswertung sollte die Tabelle aus
+einem GTFS-Release vom Anfang des Messzeitraums ergänzt werden.
+
+---
+
+## 2026-09-12 — `healthcheck.py` prüfte seit einem Monat die falsche Datenquelle
+
+**Was:** Das Skript las ausschließlich `data/transit.db` — den SQLite-Backend, der
+seit der Umstellung auf GitHub Actions am 10.08. **nicht mehr benutzt wird**. Jeder
+Aufruf seither meldete einen gesund aussehenden Bericht, der am 10.08. endete.
+
+**Warum das schlimmer ist als kein Test:** Die Ausgabe wäre identisch gewesen, ob
+die Erhebung einwandfrei läuft oder seit einem Monat tot ist. Ein Monitor, der
+„funktioniert" nicht von „steht still" unterscheidet, **beruhigt**, statt zu warnen.
+
+**Behoben:** Das Skript prüft jetzt beide produktiven Quellen anhand der
+Poll-Statusdateien, meldet Alter und Zeilenzahl des letzten Zyklus je Quelle und
+endet mit Exit-Code 1, wenn keine Quelle frische Daten liefert.
+
+**Damit ist es das dritte Mal, dass die Überwachung und nicht die Messung der
+Fehler war** — die Abdeckungszahl, die einen viertägigen Ausfall hinter 91,8 %
+verbarg; der Exit-Code, der Erholung als Fehlschlag meldete; und nun ein
+Healthcheck auf einer toten Datenbank. Für die Langfassung ist das ein eigener
+Punkt unter Fehlerquellen: Bei einer über Monate laufenden Eigenerhebung muss
+**jede Kennzahl selbst geprüft werden**, sonst misst man am Ende die Anzeige statt
+der Wirklichkeit.
