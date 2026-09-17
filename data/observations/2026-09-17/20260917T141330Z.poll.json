@@ -1,0 +1,1 @@
+{"cycle_at": "2026-09-17T14:13:30.828450+00:00", "duration_min": 65, "stops": [{"stop_id": "900100003", "status": "ok", "n": 259}, {"stop_id": "900023201", "status": "ok", "n": 252}, {"stop_id": "900120004", "status": "ok", "n": 114}, {"stop_id": "900003201", "status": "ok", "n": 200}], "n_rows": 825, "n_failed": 0}
