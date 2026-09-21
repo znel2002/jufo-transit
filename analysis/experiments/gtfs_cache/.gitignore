@@ -1,0 +1,9 @@
+# The raw VBB static GTFS feed is a 77 MB download and must never enter git
+# history. Re-fetch it with the curl command in ../line_structure.py.
+vbb_gtfs.zip
+
+# Derived tables are small and cheap to regenerate; keep them out too so the
+# repo stays the code, not the cache.
+line_profile.csv
+line_structure_features.csv
+line_structure_results.json

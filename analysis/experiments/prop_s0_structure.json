@@ -1,0 +1,7 @@
+{
+  "multi_stop_trips": 64624,
+  "identical_all": 0.6412014112404061,
+  "identical_ge1": 0.08600990535968224,
+  "identical_ge180": 0.0574468085106383,
+  "identical_ge600": 0.07876969242310577
+}

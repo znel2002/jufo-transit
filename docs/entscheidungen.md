@@ -940,3 +940,126 @@ Healthcheck auf einer toten Datenbank. Für die Langfassung ist das ein eigener
 Punkt unter Fehlerquellen: Bei einer über Monate laufenden Eigenerhebung muss
 **jede Kennzahl selbst geprüft werden**, sonst misst man am Ende die Anzeige statt
 der Wirklichkeit.
+
+---
+
+## 2026-09-21 — Drei Pivot-Kandidaten geprüft: einer tot, drei Befunde schlagen erstmals die Nachschlagetabelle
+
+**Anlass:** Der Modellvorsprung gegenüber der trivialen (Linie × Stunde)-Tabelle war
+über sechs Wochen auf praktisch null geschrumpft (bei ≥ 3 min zuletzt +0,007). Statt
+darüber zu spekulieren, ob das Projekt die Richtung wechseln sollte, wurden drei
+konkrete Alternativen **empirisch getestet**.
+
+### A. Linien-Struktur als Erklärung — **widerlegt**
+
+Hypothese: Wenn die Linienidentität fast alles erklärt, dann sollte erklärbar sein,
+*warum* — über Streckenlänge, Haltestellenabstand, Takt, Umsteigedichte,
+Betriebsform (eigener Tunnel / eigenes Gleis / Mischverkehr).
+
+Drei unabhängige Tests, alle negativ:
+
+| Test | Ergebnis |
+|---|---|
+| Struktur zusätzlich zur Betriebsform | Leave-one-out R² **0,278 → 0,029** (wird *schlechter*) |
+| innerhalb der Betriebsform, Permutationstest | partielles R² 0,233, Null-Median 0,275, **p = 0,60** |
+| nur Busse, bestes Einzelmerkmal | max |ρ| = 0,232, **p = 0,85** |
+
+Die scheinbar starken Koeffizienten waren die Betriebsform in Verkleidung: 8 km
+Haltestellenabstand bei 70 km/h *ist* „Regionalzug".
+
+**Aber der Rest ist echt:** Die Betriebsform erklärt nur **42,6 %**. Das
+verbleibende Streuungsmaß liegt beim **20,6-Fachen** des binomialen Rauschens —
+unter Bussen allein reicht die Spanne von M85 (2,0 %) bis Linie 147 (30,2 %), also
+Faktor 15 auf demselben Straßennetz. Das ist reproduzierbar und steht **nicht** im
+Fahrplan. Die Erklärung müsste in Daten liegen, die derzeit nicht erhoben werden
+(Fahrzeiten je Streckenabschnitt).
+
+### B. Netzzustand anderer Linien — **erstmals ein klarer Gewinn**
+
+Verspätungsquote *anderer* Linien an derselben Haltestelle, ausschließlich aus
+Beobachtungen **vor** der planmäßigen Abfahrt der Zielfahrt:
+
+| Modell (≥ 3 min) | ROC-AUC | PR-AUC |
+|---|---|---|
+| (Linie × Stunde)-Tabelle | 0,732 | 0,213 |
+| GBM ohne Netzzustand | 0,729 | 0,223 |
+| **GBM + Netzzustand** | **0,794** | **0,271** |
+
+Bei ≥ 10 min: 0,804 → **0,875** ROC, PR 0,133 → **0,200**.
+
+**Wichtig — das widerspricht einer eigenen früheren Messung.** Am 17.08. war
+„verzögerter Netzzustand" mit **+0,015** als wirkungslos eingestuft worden. Damals
+betrug die Verzögerung 30 Minuten, hier ist der Zustand frischer. Der Unterschied
+*ist* der Befund: Der Wert von Netzzustandsdaten hängt entscheidend an ihrer
+Aktualität. Die frühere Aussage war nicht falsch, aber zu allgemein formuliert.
+
+### C. Nowcast (Experiment B, seit 10.08. geplant, nie durchgeführt) — **deutlichster Effekt**
+
+| Modell (≥ 3 min, n = 115.924, Basisrate 6,97 %) | ROC-AUC | PR-AUC |
+|---|---|---|
+| (Linie × Stunde)-Tabelle | 0,732 | 0,226 |
+| **(A) Vorhersage zum Fahrplanzeitpunkt** | 0,780 | 0,263 |
+| **(B) Nowcast** (mit erster Echtzeitmeldung) | **0,865** | **0,575** |
+
+Echtzeit **mehr als verdoppelt** die PR-AUC. Entscheidender ist aber der Verlauf
+über den Vorhersagehorizont:
+
+| Vorlauf | PR-AUC (A) | PR-AUC (B) |
+|---|---|---|
+| 0–10 min | 0,260 | **0,912** |
+| 20–30 min | 0,353 | 0,600 |
+| 30–40 min | 0,283 | 0,452 |
+| > 60 min | 0,258 | 0,439 |
+
+„Echtzeitdaten sind zehn Minuten vorher sehr viel wert und eine Stunde vorher
+wenig" — mit Zahlen belegt. Das beantwortet die Forschungsfrage direkter als jede
+AUC-Einzelzahl.
+
+⚠️ **Zwei Varianten wurden als ungültig verworfen, nicht berichtet:** Mit
+`delay_drift_s` erreicht das Modell ROC 0,995 — die Größe ist als
+`final − first` definiert und enthält die Antwort. `n_obs` und `lead_time_s` sind
+Erhebungsartefakte, die erst im Nachhinein feststehen. Beide sind gekennzeichnet
+und aus jeder Ergebnisaussage ausgeschlossen.
+
+### D. Ausfälle statt Verspätungen — **dort verdient das Modell seinen Platz**
+
+| Modell (Ziel: `cancelled`, Basisrate 4,08 %) | ROC-AUC | PR-AUC |
+|---|---|---|
+| (Linie × Halt)-Tabelle | 0,643 | 0,056 |
+| **GBM zum Fahrplanzeitpunkt** | **0,752** | **0,142** |
+
+Hier schlägt das gelernte Modell die Tabelle deutlich (+0,11 ROC, 2,5-fache
+PR-AUC) — anders als bei Verspätungen, wo es gleichauf liegt. **Ausfälle sind
+systematischer als Verspätungen.**
+
+### E. Geprüfter Einwand gegen die Fortpflanzungs-Auswertung — **entkräftet**
+
+Auffällig war: Bei **63,3 %** aller an mehreren Halten beobachteten Fahrten ist die
+Verspätung an jedem Halt **identisch**. Verdacht: Der Feed schreibt eine einmal
+gebildete Schätzung fort, statt unabhängig zu messen — das hätte jede Aussage über
+Fortpflanzung wertlos gemacht.
+
+Nachgerechnet: **94,8 %** dieser identischen Fälle sind **durchgehend null**, also
+schlicht pünktliche Fahrten — bei 74 % Nullanteil insgesamt genau das Erwartete.
+Betrachtet man nur Fahrten, die irgendwo Verspätung haben:
+
+| Fahrten mit … | Verspätung variiert zwischen den Halten | Median-Spanne |
+|---|---|---|
+| ≥ 1 min | **91,8 %** | 1 min |
+| ≥ 3 min | **94,6 %** | 4 min |
+| ≥ 10 min | **92,3 %** | 10 min |
+
+Die Spanne wächst mit der Schwere — genau das Verhalten einer echten Messung. Der
+Einwand ist ausgeräumt.
+
+### Konsequenz für die Fragestellung
+
+Die Forschungsfrage muss **nicht** gewechselt werden, sie bekommt endlich eine
+Antwort: *Wetter und Kalender: fast nichts. Fahrplan: nichts über die Linie hinaus.
+**Aktueller Netzzustand: viel — und sein Wert fällt messbar mit dem
+Vorhersagehorizont.*** Dafür wird genau der selbst erhobene Datensatz gebraucht,
+und keine Nachschlagetabelle erreicht es.
+
+**Offen:** Der Geschwisterhaltestellen-Fehler (siehe folgender Eintrag) verfälscht
+die GTFS-RT-Quelle; die Fortpflanzung *innerhalb* einer Fahrt ist noch nicht gegen
+Fahrtzeit-Plausibilität geprüft.
