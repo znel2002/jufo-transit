@@ -1063,3 +1063,57 @@ und keine Nachschlagetabelle erreicht es.
 **Offen:** Der Geschwisterhaltestellen-Fehler (siehe folgender Eintrag) verfälscht
 die GTFS-RT-Quelle; die Fortpflanzung *innerhalb* einer Fahrt ist noch nicht gegen
 Fahrtzeit-Plausibilität geprüft.
+
+---
+
+## 2026-09-21 — Geschwisterhaltestellen: die Reservequelle erfasste ganze Verkehrsmittel nicht
+
+**Befund:** Berlin führt einen Umsteigeknoten nicht unter *einer* Kennung. Der
+GTFS-RT-Feed benennt die einzelne Station, nicht den Knoten. Die Filterung auf die
+Hub-Kennung allein erfasste deshalb vom 23.08. bis 21.09.2026:
+
+| Knoten | Tram | Bus |
+|---|---|---|
+| Alexanderplatz | **0** | **0** |
+| Hauptbahnhof | 973 | 674 |
+
+Regional- und Expressverkehr fehlten **überall**. Ursache: Die Straßenbahn am
+Alexanderplatz liegt unter `900100005` („U Alexanderplatz (Berlin) **[Tram]**"),
+die Busse unter `900100006/024/026/031`, und die Regionalbahnsteige des
+Hauptbahnhofs unter einer **zweiten Hub-Kennung `900003200`**.
+
+**Warum das gefährlich war:** Betroffen war ausschließlich die **Reservequelle** —
+diejenige, deren einziger Zweck es ist, Ausfälle der Hauptquelle aufzufangen. Die
+transport.rest-API löst eine Station serverseitig vollständig auf und war nie
+betroffen. Beim nächsten mehrtägigen Ausfall wäre also „abgesichert" worden —
+**ohne Straßenbahnen, ohne Busse am Alexanderplatz und ohne jeden Regionalverkehr**.
+Ein unbemerkt unvollständiges Backup ist schlimmer als ein bekannt fehlendes.
+
+**Regel, bewusst konservativ** (`analysis/derive_stop_siblings.py`): Eine Station
+gehört zum Knoten, wenn sie **innerhalb von 400 m** liegt **und** ihr Name das
+Kennwort des Knotens enthält. Nähe allein würde eigenständige Nachbarhaltestellen
+einschließen (Littenstr., Memhardstr., Helsingforser Platz); die Namensprüfung
+schließt sie aus. Der Radius wurde von 300 m auf 400 m erweitert, weil
+„S+U Alexanderplatz Bhf/Grunerstr." bei 383 m liegt und namentlich eindeutig zum
+Knoten gehört; an den übrigen Knoten kommt dadurch nichts hinzu.
+
+Ergebnis: **4 → 13 Stationen**. Die Liste ist als Literal in
+`transit_logger/stops.py` eingecheckt, nicht zur Laufzeit berechnet — so ist jede
+Änderung im Diff sichtbar und der Logger braucht keinen 77-MB-Download.
+
+**Messung nach der Korrektur** (ein Zyklus, 2026-09-21): **1.076 statt ~450 Zeilen**
+(Faktor 2,4). Alexanderplatz: **132 Tram, 39 Bus** (vorher jeweils 0).
+Hauptbahnhof: **13 Regional** (vorher 0).
+
+**Bewusst hingenommener Bruch:** Der Erfassungsumfang der GTFS-RT-Quelle ändert sich
+mitten in der Messreihe. Vor dem 21.09.2026 fehlen dort Tram und Bus am
+Alexanderplatz sowie Regionalverkehr durchgehend; danach nicht. Das ist bei jeder
+Auswertung zu berücksichtigen, die GTFS-RT-Daten über diesen Zeitpunkt hinweg
+vergleicht — die Spalte `source` und die neue Spalte `stop_station_id` machen den
+Umfang je Zeile nachvollziehbar. Der Bruch wurde in Kauf genommen, weil eine
+dauerhaft unvollständige Reservequelle teurer ist als eine dokumentierte Naht.
+
+**Weiterhin offen:** Expressverkehr (ICE/IC) erscheint auch nach der Korrektur
+nicht — das ist vermutlich kein Fehler, sondern der Zuschnitt des VBB-Feeds, der
+den Verbundverkehr abdeckt und nicht den DB-Fernverkehr. Nicht abschließend
+geprüft.

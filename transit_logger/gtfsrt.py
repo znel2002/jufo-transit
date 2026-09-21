@@ -43,7 +43,7 @@ from pathlib import Path
 
 import httpx
 
-from .stops import STOP_IDS
+from .stops import GTFSRT_STOP_IDS, SIBLING_TO_HUB, STOP_IDS
 
 FEED_URL = "https://production.gtfsrt.vbb.de/data"
 HORIZON_MIN = 65           # matches the original logger's look-ahead window
@@ -138,7 +138,10 @@ def parse(body: bytes, observed_at: str, stop_ids: set[str],
                 "observed_at": observed_at,
                 "feed_timestamp": _iso(feed.header.timestamp or None),
                 "source": "vbb-gtfsrt",
-                "stop_id": base,
+                # The hub id, so rows join with the transport.rest source, which
+                # queries whole stations. The actual station is kept alongside.
+                "stop_id": SIBLING_TO_HUB.get(base, base),
+                "stop_station_id": base,
                 "stop_id_full": stu.stop_id,
                 "trip_id": trip.trip_id or None,
                 "route_id": trip.route_id or None,
@@ -200,13 +203,14 @@ def poll_once(client: httpx.Client, *, write: bool = True) -> int:
                                      "status": "error", "detail": detail, "rows_kept": 0})
         return 0
 
-    rows, stats = parse(body, observed_at, set(STOP_IDS))
+    rows, stats = parse(body, observed_at, set(GTFSRT_STOP_IDS))
     stats.update({"cycle_at": observed_at, "source": "vbb-gtfsrt", "status": "ok"})
     if write:
         _write(observed_at, rows, stats)
     pct = stats["rows_with_delay"] / stats["rows_kept"] if stats["rows_kept"] else 0
     print(f"[{observed_at}] gtfs-rt: {stats['feed_bytes']/1e6:.1f} MB, "
-          f"{stats['trips_in_feed']:,} trips -> {len(rows)} rows at {len(STOP_IDS)} stops "
+          f"{stats['trips_in_feed']:,} trips -> {len(rows)} rows at "
+          f"{len(STOP_IDS)} hubs / {len(GTFSRT_STOP_IDS)} stations "
           f"({pct:.0%} with delay)", flush=True)
     return len(rows)
 
