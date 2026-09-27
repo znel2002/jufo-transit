@@ -1117,3 +1117,110 @@ dauerhaft unvollständige Reservequelle teurer ist als eine dokumentierte Naht.
 nicht — das ist vermutlich kein Fehler, sondern der Zuschnitt des VBB-Feeds, der
 den Verbundverkehr abdeckt und nicht den DB-Fernverkehr. Nicht abschließend
 geprüft.
+
+---
+
+## 2026-09-27 — Horizont-Validierung: Wert von Echtzeitinformation belastbar bestätigt, Netzzustand kleiner als behauptet
+
+**Anlass:** Die beiden Befunde vom 21.09. (Nowcast verdoppelt die PR-AUC;
+Netzzustand schlägt die Nachschlagetabelle) beruhten auf **einem einzigen**
+zeitlichen Split aus abgebrochenen Agentenläufen — anders als alle übrigen
+Ergebnisse, die Folds und Permutationstests durchlaufen hatten. Außerdem war der
+Netzzustand fälschlich als „Fahrplanzeitpunkt-tauglich" eingeordnet worden,
+obwohl er aus Beobachtungen kurz vor Abfahrt stammte.
+
+**Versuchsaufbau** (`analysis/experiments/horizon_sweep.py`): Beim Horizont *h*
+wird zum Zeitpunkt `geplante Abfahrt − h` vorhergesagt, und nur Information bis zu
+diesem Zeitpunkt ist erlaubt. **Entscheidend:** Bewertet werden nur Abfahrten, deren
+Label **nach** diesem Zeitpunkt beobachtet wurde (Label höchstens 10 min vor Abfahrt,
+285.776 von 455.276 Abfahrten = 62,8 %). Sonst wäre die „letzte Schätzung zum
+Vorhersagezeitpunkt" bei veralteten Labels schlicht das Label selbst, und kurze
+Horizonte sähen grundlos brillant aus. Die Population ist bei allen Horizonten
+dieselbe, die Kurve also vergleichbar. 4 Rolling-Origin-Folds à 4 Tage
+(12.–27.09.), tagesgeclustertes Bootstrap (400×) über 16 Testtage für jeden Gewinn.
+
+**Ergebnis ≥ 3 min** (94.088 Testabfahrten, 10.751 verspätet, Basisrate 11,4 %):
+
+| Horizont | Fahrplan (A) | A + eigene Schätzung | A + Netzzustand | Gewinn eigene Schätzung [95 %-KI] | Gewinn Netzzustand [95 %-KI] |
+|---|---|---|---|---|---|
+| 10 min | 0,287 | **0,590** | 0,337 | +0,302 [+0,281; +0,329] | +0,051 [+0,015; +0,087] |
+| 20 min | 0,287 | 0,474 | 0,337 | +0,186 [+0,163; +0,218] | +0,051 [+0,021; +0,080] |
+| 30 min | 0,287 | 0,385 | 0,319 | +0,097 [+0,077; +0,127] | +0,032 [+0,019; +0,046] |
+| 45 min | 0,287 | 0,321 | 0,302 | +0,033 [+0,020; +0,054] | +0,015 [+0,007; +0,026] |
+| 60 min | 0,287 | 0,290 | 0,287 | +0,003 [−0,000; +0,007] | +0,000 [−0,008; +0,008] |
+
+(PR-AUC; Nachschlagetabelle 0,287 — gleichauf mit dem Fahrplanmodell.)
+
+**Befund 1 — bestätigt:** Die eigene Echtzeitschätzung einer Fahrt **verdoppelt**
+die PR-AUC zehn Minuten vor Abfahrt (0,287 → 0,590) und verliert ihren Wert
+gleichmäßig mit dem Horizont, bis er nach 60 Minuten **verschwunden** ist (KI
+schließt 0 ein). Bis 45 min in allen 4 Folds besser als das Fahrplanmodell.
+
+**Befund 2 — bestätigt, aber kleiner:** Der Netzzustand hilft messbar (+0,05 bei
+10–20 min, KI ohne 0), jedoch deutlich weniger als die eigene Schätzung. Bei
+**≥ 10 min** beträgt der Gewinn nur **+0,017** — der Einzelsplit vom 21.09. hatte
+dort +0,067 gezeigt. **Diese frühere Angabe war zu optimistisch** und ist hiermit
+korrigiert.
+
+**Befund 3 — wichtig für die Deutung:** Der Netzzustand ist bei *allen* Horizonten
+zu ~97 % verfügbar — und trotzdem fällt sein Wert von +0,05 auf 0. Das ist sauberer
+Beleg für **echten Informationsverfall**. Bei der eigenen Schätzung ist der Verfall
+dagegen teilweise ein **Verfügbarkeitseffekt**: 60 min vor Abfahrt liegt sie nur
+noch für **8,4 %** der Fahrten vor (10 min: 83,2 %, 30 min: 61,5 %), weil der Feed
+Fahrten so weit im Voraus kaum führt. Beide Ursachen gehören getrennt benannt.
+
+**Befund 4 — „beides zusammen":** Netzzustand *zusätzlich* zur eigenen Schätzung
+bringt bei ≥ 3 min konstant nur **+0,016** (KI ohne 0). Wer die eigene Schätzung
+hat, gewinnt durch den Netzzustand kaum noch etwas. In der Hauptabbildung deshalb
+nicht als eigene Linie gezeichnet (wäre von „eigene Schätzung" nicht zu
+unterscheiden), sondern im Text genannt.
+
+**Befund 5 — Fahrplanmodell vs. Tabelle, erneut:** ≥ 3 min gleichauf (je 0,287);
+≥ 10 min schlägt die Nachschlagetabelle das Modell sogar (0,168 vs. 0,150 PR-AUC).
+Der zentrale Negativbefund hält auf der unabhängigen Stichprobe.
+
+**Einschränkungen:** Gilt für die 62,8 % der Abfahrten mit frischem Label; die
+Fold-Streuung ist bei ≥ 10 min groß (siehe Fehlerbalken). Testzeitraum nur 16 Tage
+im September.
+
+Abbildung: `analysis/experiments/horizon_sweep.png/.pdf` (Hauptabbildung der
+Langfassung, Abb. 4). Nach dem ersten Rendern überarbeitet: Beschriftungen
+kollidierten, und eine Beschriftungsbox verdeckte einen Teil einer Datenlinie.
+
+---
+
+## 2026-09-27 — Liniennamen aus mehreren GTFS-Releases, Verkehrsmittel aus der route_id
+
+**Befund:** Bei 21,1 % der GTFS-RT-Abfahrten fehlte der Linienname, weil die
+Routentabelle aus einem einzigen GTFS-Release stammte, VBB aber `route_id`s zwischen
+Releases neu vergibt und die Erhebung mehrere Releases umspannt.
+
+**Lösung:** `fetch_gtfs_routes.py` **ergänzt** die Tabelle je Release, statt sie zu
+überschreiben (ältere Einträge gewinnen bei Konflikten, damit sich keine Bezeichnung
+stillschweigend ändert). Zwei weitere Releases (17.09., 27.09.) brachten nur
+12 neue `route_id`s, darunter aber verkehrsstarke: fehlende Liniennamen **21,1 % →
+0,2 %**.
+
+**Verkehrsmittel unabhängig von der Tabelle:** In jeder VBB-`route_id` ist der Teil
+nach dem letzten „_" der GTFS-`route_type` (1.259 von 1.259 Routen geprüft). Das
+Verkehrsmittel wird daraus abgeleitet, wenn die Route unbekannt ist: fehlend **0,0 %**.
+
+---
+
+## 2026-09-27 — Gliederung der Langfassung und KI-Offenlegung
+
+**Was:** `docs/langfassung/gliederung.md` nach dem offiziellen *Leitfaden zum
+Verfassen der schriftlichen Arbeit* (Stand Juli 2025): 15 Seiten inkl. aller
+Abbildungen, vorgeschriebene Kapitelreihenfolge, Seitenbudget je Kapitel,
+Abbildungsplan, Zeitplan ab Oktober, Anmeldetext.
+
+**Warum jetzt:** Laut Leitfaden machen Auswertung und Schreiben mindestens die
+Hälfte des Aufwands aus; ein Entscheidungslog von über 1.100 Zeilen auf 15 Seiten zu
+verdichten ist genau der Schritt, an dem es bisher gescheitert ist.
+
+**KI-Offenlegung:** Das *Leitbild zum Umgang mit KI* der Stiftung (Nov. 2024) erlaubt
+und begrüßt KI-Nutzung, verlangt aber **klare Kennzeichnung als
+Unterstützungsleistung** (Programm benannt, Verwendung beschrieben) und gewichtet das
+**Jurygespräch** zur Feststellung des Eigenanteils stärker als die schriftliche
+Arbeit. Die Gliederung enthält dafür einen Abschnitt; den eigenen Anteil kann nur der
+Verfasser selbst beschreiben.

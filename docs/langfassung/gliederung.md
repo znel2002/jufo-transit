@@ -100,8 +100,9 @@ Untergliedert, jede Aussage an Abbildung/Tabelle gebunden.
 4. **Fahrplan-Vorhersage ≈ Nachschlagetabelle** (0,8 S.) — der zentrale Negativbefund;
    Schwere vs. Vorhersagbarkeit. *Abb. 3.*
 5. **Wert von Echtzeitinformation über den Horizont** (1,2 S.) — **Hauptabbildung**:
-   PR-AUC über Vorlauf für Tabelle, (A), (A)+Netz, (A)+eigene Schätzung, beides. *Abb. 4.*
-   ⧗ *Wartet auf `horizon_sweep.py` (läuft).*
+   PR-AUC über Vorlauf. *Abb. 4.* ✓ Validiert 27.09.: eigene Schätzung 0,287 → 0,590
+   (10 min), Wert verschwindet bis 60 min; Netzzustand +0,05, fällt auf 0 trotz 97 %
+   Verfügbarkeit (= echter Informationsverfall); „beides" nur +0,016 → im Text.
 6. **Ausfälle** (0,4 S.) — Modell schlägt Tabelle deutlich. *Tab. 2.*
 7. **Widerlegt: Linienstruktur, Wetter** (1,0 S.) — Struktur erklärt innerhalb der
    Betriebsform nichts (p = 0,60); Wetter real aber vernachlässigbar, kein
@@ -139,7 +140,7 @@ Bibliotheken (pandas, scikit-learn, httpx).
 | Abb. 1 | Datenfluss: Quellen → Logger → GitHub → Datensatz | von Hand zeichnen | offen |
 | Abb. 2 | Verteilung der Verspätung + Anteil an Gesamtverspätung | neu, aus `dataset.parquet` | offen |
 | Abb. 3 | ROC/PR über Schwellenwert, Modell vs. Tabelle | `signal_check.py --sweep` | Daten da |
-| Abb. 4 | **PR-AUC über Vorhersagehorizont** (Hauptabbildung) | `experiments/horizon_sweep.py` | läuft |
+| Abb. 4 | **PR-AUC über Vorhersagehorizont** (Hauptabbildung) | `experiments/horizon_sweep.py` + `plot_horizon.py` | **fertig** (27.09.) |
 | Tab. 1 | Datensatz und Abdeckung je Quelle | `collection_dashboard.py` | Daten da |
 | Tab. 2 | Ausfall-Vorhersage vs. Tabelle | `experiments/nowcast.py` | Daten da |
 
