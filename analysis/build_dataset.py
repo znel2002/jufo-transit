@@ -89,6 +89,13 @@ def load_gtfsrt(pattern: str = RT_GLOB) -> pd.DataFrame:
         routes = pd.read_csv(ROUTES_CSV, dtype=str)
         df = df.merge(routes[["route_id", "line_name", "product"]],
                       on="route_id", how="left")
+        # Product never has to be missing: in every VBB route_id the suffix after
+        # the last "_" IS the GTFS route_type (verified on 1,259/1,259 routes), so
+        # the vehicle type is recoverable even for ids absent from the lookup
+        # table. The line NAME is not recoverable that way and stays missing.
+        from fetch_gtfs_routes import ROUTE_TYPE_TO_PRODUCT
+        suffix = df["route_id"].astype(str).str.rsplit("_", n=1).str[-1]
+        df["product"] = df["product"].fillna(suffix.map(ROUTE_TYPE_TO_PRODUCT))
         unresolved = df["line_name"].isna().mean()
         if unresolved > 0.01:
             print(f"  ! {unresolved:.1%} of GTFS-RT rows have no route match -- "

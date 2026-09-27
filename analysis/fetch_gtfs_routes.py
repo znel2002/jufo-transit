@@ -50,14 +50,19 @@ ROUTE_TYPE_TO_PRODUCT = {
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--url", default=GTFS_URL)
+    ap.add_argument("--zip", help="use a local GTFS zip instead of downloading")
     ap.add_argument("--out", default=str(OUT))
     args = ap.parse_args()
 
-    print(f"downloading {args.url} (~74 MB, once) ...")
-    req = urllib.request.Request(args.url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=600) as resp:
-        blob = resp.read()
-    print(f"  {len(blob)/1e6:.1f} MB")
+    if args.zip:
+        blob = Path(args.zip).read_bytes()
+        print(f"using local {args.zip} ({len(blob)/1e6:.1f} MB)")
+    else:
+        print(f"downloading {args.url} (~74 MB, once) ...")
+        req = urllib.request.Request(args.url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            blob = resp.read()
+        print(f"  {len(blob)/1e6:.1f} MB")
 
     with zipfile.ZipFile(io.BytesIO(blob)) as zf:
         text = zf.read("routes.txt").decode("utf-8-sig")
@@ -76,13 +81,27 @@ def main() -> int:
             "product": product,
         })
 
+    # MERGE, never overwrite. VBB reissues route_ids between GTFS releases, and the
+    # captured GTFS-RT data spans several releases: a route id retired in the
+    # current feed may still appear in August captures. Keeping every id ever seen
+    # (earlier releases win on conflicts, so a label never silently changes)
+    # maximises how much of the archive can be resolved to a line name.
     out = Path(args.out)
+    before = 0
+    if out.exists():
+        with out.open(encoding="utf-8") as fh:
+            existing = {r["route_id"]: r for r in csv.DictReader(fh)}
+        before = len(existing)
+        for r in rows:
+            existing.setdefault(r["route_id"], r)
+        rows = list(existing.values())
     with out.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=["route_id", "line_name", "route_type", "product"])
         w.writeheader()
         w.writerows(rows)
 
-    print(f"wrote {out}  ({len(rows):,} routes, {out.stat().st_size/1024:.0f} kB)")
+    print(f"wrote {out}  ({len(rows):,} routes, +{len(rows)-before:,} new, "
+          f"{out.stat().st_size/1024:.0f} kB)")
     if unknown:
         print(f"  ! unmapped route_type values (product left blank): {sorted(unknown)}")
         print("    add them to ROUTE_TYPE_TO_PRODUCT if they appear in the logged stops")
