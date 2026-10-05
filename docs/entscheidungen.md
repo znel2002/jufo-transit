@@ -1332,3 +1332,49 @@ das ungewichtete verwenden.
 39,5 % ≥ 3 min verspätet (3,7-fache Basisrate) bzw. zu 14,2 % ≥ 10 min (6,4-fach) und
 enthalten 31,9 % aller Verspätungen ≥ 10 min. Diese Trennschärfe liefert aber ebenso
 schon die Nachschlagetabelle.
+
+---
+
+## 2026-10-05 — Horizont-Validierung neu mit jüngsten Labels: Netzzustand-Effekt verschwindet
+
+Neu gerechnet nach der Label-Korrektur, mit **6 statt 4 Folds** (16 → 24 Testtage,
+12.09.–05.10.) und deutlich größerer Population (493.654 statt 285.776 Abfahrten mit
+frischem Label; Test 245.134, davon 26.225 ≥ 3 min verspätet).
+
+| Horizont | Fahrplan (A) | A + eigene Schätzung | A + Netzzustand |
+|---|---|---|---|
+| 10 min | 0,256 | **0,459** | 0,257 |
+| 30 min | 0,256 | 0,323 | 0,261 |
+| 60 min | 0,256 | 0,262 | 0,258 |
+
+(≥ 3 min, PR-AUC; Nachschlagetabelle 0,254.)
+
+**Eigene Echtzeitschätzung — hält:** +0,203 [+0,191; +0,216] bei 10 min, +0,067 bei
+30 min, +0,005 bei 60 min; in **6/6 Folds bei jedem Horizont** besser als (A). Bei
+≥ 10 min: 0,114 → 0,398 (+0,282). Der Effekt ist kleiner als am 27.09. (+0,302), aber
+robust.
+
+**Netzzustand — hält nicht:** +0,001 [−0,011; +0,016] bei 10 min (≥ 3 min), +0,001
+bei ≥ 10 min — **das Konfidenzintervall schließt 0 bei jedem Horizont ein.** Verlauf
+dieses Befunds:
+
+| Datum | Prüfung | Gewinn PR-AUC |
+|---|---|---|
+| 21.09. | Einzelsplit (Agent) | ≈ +0,05 bis +0,07 |
+| 27.09. | 4 Folds, alte Labels | +0,051 [+0,015; +0,087] |
+| 05.10. | 6 Folds, jüngste Labels | **+0,001 [−0,011; +0,016]** |
+
+Der Effekt hing also an der alten Labeldefinition bzw. Population. Plausibelste
+Erklärung: Mit den veralteten Logger-Labels war ein Teil der Verspätungen
+„unsichtbar", und der Netzzustand half, diese Lücke zu überbrücken; mit dem jüngsten
+Label gibt es dort nichts mehr zu überbrücken. Nicht bewiesen.
+
+**Folgen:**
+1. Die am 27.09. vorgebrachte Deutung, der Netzzustand belege „echten
+   Informationsverfall", entfällt. Der Verfall der eigenen Schätzung über den Horizont
+   ist **teilweise ein Verfügbarkeitseffekt** (Schätzung vorhanden: 10 min 83 %,
+   30 min 59 %, 60 min nur 7,6 %) — diese Trennung ist noch zu prüfen.
+2. Die Kernaussage der Langfassung wurde korrigiert (Gliederung, Abschnitt 1 und
+   Anmeldetext): Netzzustand wird als **Negativbefund** berichtet, samt dieser Tabelle.
+3. Bestätigt die Regel von heute: ein Befund ist erst belastbar nach Fold-Validierung
+   **mit dem endgültigen Label**.

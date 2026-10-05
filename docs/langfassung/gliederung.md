@@ -33,9 +33,14 @@ Fazit und Ausblick · Quellen- und Literaturverzeichnis · Unterstützungsleistu
 ## 1. Kernaussage (vor dem Schreiben festlegen, danach nicht mehr ändern)
 
 > Aus offenen Daten lassen sich Verspätungen im Berliner Nahverkehr **über Zufall**
-> vorhersagen — aber was sie treibt, ist nicht Wetter oder Kalender, sondern **welche
-> Linie** fährt und **was gerade im Netz passiert**. Der Wert von Echtzeitinformation
-> ist groß kurz vor Abfahrt und fällt mit dem Vorhersagehorizont messbar ab.
+> vorhersagen — aber was sie bestimmt, ist nicht Wetter oder Kalender, sondern **welche
+> Linie** fährt. Zum Fahrplanzeitpunkt erreicht kein gelerntes Modell mehr als eine
+> einfache Nachschlagetabelle. Erst die **eigene Echtzeitschätzung einer Fahrt** hilft
+> deutlich — kurz vor Abfahrt sehr, nach einer Stunde gar nicht mehr. Der Zustand der
+> übrigen Linien am Halt bringt dagegen nichts Messbares.
+>
+> (Korrigiert 05.10.: Die frühere Fassung behauptete, der Netzzustand treibe die
+> Verspätung mit. Mit besseren Labels und 6 Folds hielt das nicht.)
 
 Jedes Kapitel muss diese Aussage stützen, einschränken oder begründen. Was das nicht
 tut, gehört an den Stand, nicht in die 15 Seiten.
@@ -100,9 +105,11 @@ Untergliedert, jede Aussage an Abbildung/Tabelle gebunden.
 4. **Fahrplan-Vorhersage ≈ Nachschlagetabelle** (0,8 S.) — der zentrale Negativbefund;
    Schwere vs. Vorhersagbarkeit. *Abb. 3.*
 5. **Wert von Echtzeitinformation über den Horizont** (1,2 S.) — **Hauptabbildung**:
-   PR-AUC über Vorlauf. *Abb. 4.* ✓ Validiert 27.09.: eigene Schätzung 0,287 → 0,590
-   (10 min), Wert verschwindet bis 60 min; Netzzustand +0,05, fällt auf 0 trotz 97 %
-   Verfügbarkeit (= echter Informationsverfall); „beides" nur +0,016 → im Text.
+   PR-AUC über Vorlauf. *Abb. 4.* ✓ Neu validiert 05.10. (jüngste Labels, 6 Folds,
+   245.134 Testabfahrten): eigene Schätzung 0,256 → 0,459 (10 min, 6/6 Folds), fällt bis
+   60 min auf 0,262. **Netzzustand: kein messbarer Gewinn** (+0,001 [−0,011; +0,016]) —
+   als Negativbefund berichten, mit der Geschichte, wie er schrumpfte (siehe Log 05.10.).
+   Offen: Verfall der eigenen Schätzung ist teils Verfügbarkeit (60 min: nur 7,6 %).
 6. **Ausfälle** (0,4 S.) — **nicht vorhersagbar**: über 4 Wochen-Folds ROC 0,572 für Modell
    und Tabelle gleich, nahe Zufall. Der frühere Einzelsplit-Befund (0,752) hielt nicht. *Tab. 2.*
 7. **Widerlegt: Linienstruktur, Wetter** (1,0 S.) — Struktur erklärt innerhalb der
@@ -232,4 +239,5 @@ Umsteigeknoten und habe damit einen Datensatz zu U-Bahn, Tram und Bus aufgebaut,
 öffentlich so nicht gibt. Mit Methoden des maschinellen Lernens untersuche ich, wie gut
 sich Verspätungen aus offenen Fahrplan-, Wetter- und Echtzeitdaten vorhersagen lassen und
 welche Faktoren sie tatsächlich bestimmen. Überraschend: Wetter und Kalender spielen kaum
-eine Rolle, entscheidend sind die Linie selbst und der aktuelle Zustand des Netzes.
+eine Rolle, entscheidend ist die Linie selbst — und erst Echtzeitdaten kurz vor der
+Abfahrt verbessern die Vorhersage deutlich.
