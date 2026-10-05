@@ -46,6 +46,7 @@ DEFAULT_OUT = ROOT / "data" / "dataset.parquet"
 KEY = ["trip_id", "stop_id", "planned_when"]
 # Carried through from the last observation of each departure.
 CARRY = ["line_name", "product", "direction", "platform", "planned_platform", "source"]
+# label_source (added by dedupe_across_sources) records which feed the label came from.
 
 
 def load_observations(pattern: str = OBS_GLOB) -> pd.DataFrame:
@@ -169,7 +170,7 @@ def collapse_to_departures(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def dedupe_across_sources(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop GTFS-RT copies of departures the logger already recorded.
+    """Merge the sources: one row per departure, freshest label across both.
 
     Both feeds watch the SAME physical departures, but identify trips in different
     namespaces, so a naive concat double-counts: measured 2026-09-12, 47.5% of
@@ -191,16 +192,47 @@ def dedupe_across_sources(df: pd.DataFrame) -> pd.DataFrame:
     if "source" not in df.columns or df["source"].nunique() < 2:
         return df
     key = ["stop_id", "planned_when", "line_name"]
+    df = df.copy()
+    df["label_source"] = df["source"]
     is_rt = df["source"] == "vbb-gtfsrt"
-    seen = set(map(tuple, df.loc[~is_rt, key].astype(str).itertuples(index=False)))
-    rt_keys = list(map(tuple, df.loc[is_rt, key].astype(str).itertuples(index=False)))
+    k = (df["stop_id"].astype(str) + "|" + df["planned_when"].astype(str)
+         + "|" + df["line_name"].astype(str))
+    tr, rt = df[~is_rt].assign(_k=k[~is_rt]), df[is_rt].assign(_k=k[is_rt])
+
+    # FRESHEST LABEL WINS (added 2026-10-05). On the 278,700 departures both sources
+    # saw, the logger called 6.9% >=3 min late and GTFS-RT 10.3% -- the SAME trips.
+    # GTFS-RT's last sighting was the later one in 99.8% of pairs (its feed keeps a
+    # trip's passed stops for ~1 h, so it often sees the vehicle AFTER departure),
+    # and large disagreements came with a median 51-min label-age gap: timing, not
+    # measurement error. Preferring the logger row therefore kept the staler label
+    # and understated delay by about a third. Now, where both sources have the
+    # departure, the logger row is kept (it has direction and platform) but its
+    # label is replaced by the GTFS-RT one whenever that was observed later.
+    # Keys that are ambiguous inside the logger (5.8%: two directions, same minute)
+    # are left untouched -- an unmatched label is safer than a mismatched one.
+    amb = set(tr["_k"][tr["_k"].duplicated(keep=False)])
+    rt_best = (rt[~rt["_k"].isin(amb)].sort_values("last_observed_at")
+               .drop_duplicates("_k", keep="last").set_index("_k"))
+    cand = tr[~tr["_k"].isin(amb) & tr["_k"].isin(rt_best.index)]
+    # keep timestamps tz-aware: .values would strip the zone and break comparison
+    rt_seen = pd.Series(rt_best.loc[cand["_k"], "last_observed_at"].tolist(), index=cand.index)
+    idx = cand.index[(rt_seen > cand["last_observed_at"]).to_numpy()]
+    src = rt_best.loc[tr.loc[idx, "_k"]]
+    for c in ("final_delay_s", "last_observed_at"):
+        df.loc[idx, c] = pd.Series(src[c].tolist(), index=idx)
+    df.loc[idx, "label_source"] = "vbb-gtfsrt"
+    df.loc[idx, "lead_time_s"] = (df.loc[idx, "planned_when"]
+                                  - df.loc[idx, "last_observed_at"]).dt.total_seconds()
+    df.loc[idx, "delay_drift_s"] = df.loc[idx, "final_delay_s"] - df.loc[idx, "first_delay_s"]
+
+    seen = set(tr["_k"])
     drop_mask = pd.Series(False, index=df.index)
-    drop_mask.loc[is_rt] = [k in seen for k in rt_keys]
+    drop_mask.loc[rt.index] = rt["_k"].isin(seen).values
     dropped = int(drop_mask.sum())
     out = df[~drop_mask]
-    print(f"cross-source dedupe: dropped {dropped:,} GTFS-RT departures already "
-          f"recorded by the logger; kept {len(out):,} "
-          f"({int(is_rt.sum()) - dropped:,} unique to GTFS-RT)")
+    print(f"cross-source dedupe: dropped {dropped:,} GTFS-RT duplicates; kept {len(out):,} "
+          f"({int(is_rt.sum()) - dropped:,} unique to GTFS-RT); "
+          f"{len(idx):,} logger labels replaced by a fresher GTFS-RT label")
     return out
 
 

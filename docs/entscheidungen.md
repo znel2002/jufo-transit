@@ -1249,3 +1249,86 @@ ein Fenster, das deutlich über den fraglichen Zeitraum hinausreicht.
 77,2 %, GTFS-RT 96,0 %, 33 Slots ohne jede Quelle). Gegenmaßnahme nicht ergriffen:
 Ein einzelner Infrastrukturausfall in 56 Tagen rechtfertigt keinen zusätzlichen
 Überwachungs-Workflow; als bekannte Lücke in der Fehlerquellen-Tabelle zu führen.
+
+---
+
+## 2026-10-05 — Datenqualität geprüft: das Label war systematisch zu niedrig, jetzt behoben
+
+**Prüfung** (`analysis/data_quality.py`, `analysis/source_agreement.py`), 638.185
+Abfahrten, 55 Tage:
+
+- **Integrität gut:** 0 doppelte Schlüssel, 0 quellenübergreifende Duplikate,
+  `drift == final − first` zu 100 %; Linienname/Verkehrsmittel 0,0 % fehlend, Wetter
+  1–2 %. Nur drei dünne Tage (Starttag, 20.08., 23.08. — Ausfall).
+- **Stark veraltete Labels unterschätzen Verspätung:** ≥ 3 min verspätet bei 25,2 %
+  der Abfahrten, die zuletzt bei/nach Abfahrt gesehen wurden, aber nur bei 1,9 %, wenn
+  die letzte Sichtung > 30 min vor Abfahrt lag. Was danach an Verspätung entsteht,
+  wird nie erfasst. (Ein Teil des Unterschieds ist Selektion: verspätete Fahrzeuge
+  bleiben länger auf der Anzeige.)
+- **GTFS-RT erfasst auch bereits passierte Halte.** Der Filter begrenzt nur die
+  Vorschau nach vorn; der VBB-Feed behält passierte Halte einer Fahrt rund eine Stunde.
+  94 % der nur in GTFS-RT vorhandenen Abfahrten wurden zuletzt **nach** der Abfahrt
+  gesehen — ihr Label liegt nahe an der tatsächlichen Verspätung. Unbeabsichtigt, aber
+  wertvoll.
+
+**Direkter Quellenvergleich** auf 278.700 Abfahrten, die beide Quellen sahen:
+63,4 % identisch, 85,7 % innerhalb 1 Minute, nur 4,3 % > 3 Minuten Unterschied —
+**aber ≥ 3 min verspätet: Logger 6,9 %, GTFS-RT 10,3 % für dieselben Fahrten.** Das
+GTFS-RT-Label war in 99,8 % der Paare das jüngere; große Abweichungen gingen mit einem
+Altersunterschied von im Median 51 Minuten einher. Ursache ist also der Zeitpunkt,
+nicht ein Messfehler. Die bisherige Zusammenführung bevorzugte den Logger und damit
+**das ältere, schlechtere Label** — rund ein Drittel der Verspätungen fehlte.
+
+**Behoben — „jüngstes Label gewinnt":** Haben beide Quellen eine Abfahrt, bleibt die
+Logger-Zeile (Richtung, Gleis), ihr Label wird aber durch das GTFS-RT-Label ersetzt,
+wenn dieses später beobachtet wurde. Mehrdeutige Schlüssel (5,8 % innerhalb des
+Loggers) bleiben unangetastet. Neue Spalte `label_source`. Ergebnis:
+
+| | vorher (Logger bevorzugt) | nachher (jüngstes Label) |
+|---|---|---|
+| Abfahrten mit Label | 547.183 | **582.152** |
+| ≥ 3 min verspätet | 7,76 % | **9,36 %** |
+| Label > 30 min alt | 10,8 % | **4,0 %** |
+| zuletzt nach Abfahrt gesehen | 17,4 % | 63,8 % |
+
+316.361 Labels wurden ersetzt. Keine Rohdaten verändert.
+
+**Neue Fehlerquelle für die Langfassung:** Die Labeldefinition hängt von der Quelle ab
+(Logger: letzte Schätzung *vor* Abfahrt; GTFS-RT: oft Wert *nach* Abfahrt), und der
+GTFS-RT-Anteil stieg von 0 % auf 35 %. Wöchentliche Pünktlichkeitswerte spiegeln
+deshalb teils die Quellenmischung — kein Zeitreihenvergleich ohne diesen Hinweis.
+
+---
+
+## 2026-10-05 — Modellgüte über 4 Wochen-Folds: Tabelle = Modell; Ausfall-Befund zurückgezogen
+
+`analysis/model_quality.py`, 4 Folds à 7 Tage (08.09.–05.10.), jüngste Labels:
+
+| Ziel | Population | Tabelle PR-AUC | GBM PR-AUC | GBM gewinnt |
+|---|---|---|---|---|
+| ≥ 3 min | alle Labels (Basis 9,9 %) | 0,253 | 0,256 | 3/4 |
+| ≥ 3 min | frische Labels (10,7 %) | 0,270 | 0,275 | 3/4 |
+| ≥ 10 min | frische Labels (2,2 %) | 0,142 | 0,135 | 2/4 |
+| Ausfall | alle Abfahrten (2,9 %) | ROC 0,572 | ROC 0,572 | 2/4 |
+
+**Bestätigt (zum dritten Mal, jetzt mit besseren Labels):** Zum Fahrplanzeitpunkt ist
+das gelernte Modell **nicht besser** als die Nachschlagetabelle.
+
+**Zurückgezogen:** Am 21.09. wurde berichtet, Ausfälle seien „systematischer als
+Verspätungen" (Modell ROC 0,752 vs. Tabelle 0,643). Das stammte aus einem einzelnen
+Split eines abgebrochenen Agentenlaufs und **hält nicht**: über vier Folds 0,572 zu
+0,572, Streuung ±0,10, nahe Zufall. Ausfälle sind aus Fahrplanmerkmalen nicht
+vorhersagbar. Dies ist der zweite Einzelsplit-Befund aus diesen Läufen, der sich bei
+sauberer Prüfung als zu optimistisch erwies (vgl. Netzzustand, 27.09.) — **Regel ab
+jetzt: kein Ergebnis in die Langfassung ohne Fold-Validierung.**
+
+**Kalibrierung** (ungewichtetes Modell, gepoolt): in den oberen Dezilen gut
+(vorhergesagt 16,6 % → beobachtet 16,5 %; 33,1 % → 30,9 %), in den unteren leicht zu
+niedrig (2,3 % → 4,2 %). Das klassengewichtete Modell taugt für Ranglisten, nicht für
+Wahrscheinlichkeiten (Brier 0,182 statt 0,089) — für jede Wahrscheinlichkeitsaussage
+das ungewichtete verwenden.
+
+**Praktischer Nutzen trotz Gleichstand:** Die riskantesten 5 % der Abfahrten sind zu
+39,5 % ≥ 3 min verspätet (3,7-fache Basisrate) bzw. zu 14,2 % ≥ 10 min (6,4-fach) und
+enthalten 31,9 % aller Verspätungen ≥ 10 min. Diese Trennschärfe liefert aber ebenso
+schon die Nachschlagetabelle.

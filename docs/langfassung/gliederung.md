@@ -103,7 +103,8 @@ Untergliedert, jede Aussage an Abbildung/Tabelle gebunden.
    PR-AUC über Vorlauf. *Abb. 4.* ✓ Validiert 27.09.: eigene Schätzung 0,287 → 0,590
    (10 min), Wert verschwindet bis 60 min; Netzzustand +0,05, fällt auf 0 trotz 97 %
    Verfügbarkeit (= echter Informationsverfall); „beides" nur +0,016 → im Text.
-6. **Ausfälle** (0,4 S.) — Modell schlägt Tabelle deutlich. *Tab. 2.*
+6. **Ausfälle** (0,4 S.) — **nicht vorhersagbar**: über 4 Wochen-Folds ROC 0,572 für Modell
+   und Tabelle gleich, nahe Zufall. Der frühere Einzelsplit-Befund (0,752) hielt nicht. *Tab. 2.*
 7. **Widerlegt: Linienstruktur, Wetter** (1,0 S.) — Struktur erklärt innerhalb der
    Betriebsform nichts (p = 0,60); Wetter real aber vernachlässigbar, kein
    Saison-Artefakt. ⧗ *Wetter-Endwert erst nach Winterdaten (Mitte Januar).*
@@ -142,7 +143,7 @@ Bibliotheken (pandas, scikit-learn, httpx).
 | Abb. 3 | ROC/PR über Schwellenwert, Modell vs. Tabelle | `signal_check.py --sweep` | Daten da |
 | Abb. 4 | **PR-AUC über Vorhersagehorizont** (Hauptabbildung) | `experiments/horizon_sweep.py` + `plot_horizon.py` | **fertig** (27.09.) |
 | Tab. 1 | Datensatz und Abdeckung je Quelle | `collection_dashboard.py` | Daten da |
-| Tab. 2 | Ausfall-Vorhersage vs. Tabelle | `experiments/nowcast.py` | Daten da |
+| Tab. 2 | Ausfall-Vorhersage vs. Tabelle (Negativbefund) | `analysis/model_quality.py` | Daten da (05.10.) |
 
 Mehr als ~5 Abbildungen passen nicht ins Budget. Alles Weitere → Stand.
 
