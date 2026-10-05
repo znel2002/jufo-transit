@@ -1224,3 +1224,28 @@ Unterstützungsleistung** (Programm benannt, Verwendung beschrieben) und gewicht
 **Jurygespräch** zur Feststellung des Eigenanteils stärker als die schriftliche
 Arbeit. Die Gliederung enthält dafür einen Abschnitt; den eigenen Anteil kann nur der
 Verfasser selbst beschreiben.
+
+---
+
+## 2026-10-05 — Größte Lücke bisher: 28.09., 09:27–16:04 UTC (6,6 h, beide Quellen)
+
+**Befund:** Lauf `36392985809` lief nur von 08:51 bis 10:12 UTC (81 statt ~345 Minuten)
+und endete als *failure*. Danach startete bis 16:04 kein Nachfolger. In diesem Fenster
+fehlen Daten aus **beiden** Quellen — die bisher längste Lücke (vorher 5,9 h am 28.08.).
+
+**Ursache nicht feststellbar:** Für den Lauf ist kein Protokoll abrufbar. Das spricht
+für einen abgebrochenen Runner (GitHub-Infrastruktur) statt eines Fehlers im Skript;
+belegen lässt es sich nicht. Dass anschließend sechs Stunden lang kein geplanter Lauf
+startete, ist das bekannte Verwerfen von Zeitplan-Auslösern durch GitHub.
+
+**Bewertung:** Der korrigierte Exit-Status (12.09.) hat hier richtig angeschlagen —
+dies war ein echter Verlust, kein erholter Push. Die eigene Lückenprüfung meldete
+zunächst fälschlich „keine Lücke", weil sie nur Abstände *zwischen* Zyklen innerhalb
+eines Fensters prüfte und die Fensterränder ignorierte; erst die Prüfung über den
+ganzen Tag zeigte die 398-Minuten-Lücke. Für Lückenprüfungen gilt deshalb: immer über
+ein Fenster, das deutlich über den fraglichen Zeitraum hinausreicht.
+
+**Gesamtbild unverändert gut:** kombinierte nutzbare Abdeckung 99,1 % (transport.rest
+77,2 %, GTFS-RT 96,0 %, 33 Slots ohne jede Quelle). Gegenmaßnahme nicht ergriffen:
+Ein einzelner Infrastrukturausfall in 56 Tagen rechtfertigt keinen zusätzlichen
+Überwachungs-Workflow; als bekannte Lücke in der Fehlerquellen-Tabelle zu führen.
