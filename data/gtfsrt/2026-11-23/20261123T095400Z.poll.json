@@ -1,0 +1,1 @@
+{"feed_bytes": 10423368, "feed_timestamp": "2026-11-23T09:53:48+00:00", "trips_in_feed": 10109, "rows_kept": 1011, "rows_with_delay": 842, "horizon_min": 65, "cycle_at": "2026-11-23T09:54:00.646952+00:00", "source": "vbb-gtfsrt", "status": "ok"}
